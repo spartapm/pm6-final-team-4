@@ -175,6 +175,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const waitForSession = async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) return data.session;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+
+      return null;
+    };
+
     const resolveAuthRedirect = async () => {
       const callbackCode = new URLSearchParams(window.location.search).get("code");
 
@@ -190,9 +200,9 @@ export default function Home() {
         }
       }
 
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        await completeSignedInFlow(data.session.user.id);
+      const session = await waitForSession();
+      if (session) {
+        await completeSignedInFlow(session.user.id);
         return;
       }
 
