@@ -111,6 +111,53 @@ create index if not exists letters_cycle_idx on letters(cycle_id);
 create index if not exists letters_sender_idx on letters(sender_id);
 create index if not exists letters_receiver_idx on letters(receiver_id);
 
+create or replace function redeem_invite_code(p_code text)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_code text := upper(trim(p_code));
+  v_couple_id uuid;
+  v_created_by uuid;
+begin
+  select couple_id, created_by
+    into v_couple_id, v_created_by
+  from invite_codes
+  where code = v_code
+    and used_by is null
+  for update;
+
+  if v_couple_id is null then
+    raise exception 'invalid_invite_code';
+  end if;
+
+  if v_created_by = auth.uid() then
+    raise exception 'cannot_use_own_invite_code';
+  end if;
+
+  update couples
+  set user_b_id = auth.uid(),
+      connected_at = now()
+  where id = v_couple_id
+    and user_b_id is null;
+
+  if not found then
+    raise exception 'already_connected';
+  end if;
+
+  update invite_codes
+  set used_by = auth.uid(),
+      used_at = now()
+  where code = v_code;
+
+  return v_couple_id;
+end;
+$$;
+
+grant execute on function redeem_invite_code(text) to authenticated;
+
 alter table profiles enable row level security;
 alter table couples enable row level security;
 alter table invite_codes enable row level security;

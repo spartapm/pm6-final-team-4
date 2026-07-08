@@ -2,6 +2,27 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import {
+  addChoreReaction,
+  AppLetter,
+  AppTask,
+  createInviteCode,
+  defaultTasks,
+  ensureCouple,
+  ensureCurrentCycle,
+  ensureProfile,
+  getCurrentCouple,
+  getProfile,
+  insertLetter,
+  insertWeeklyChore,
+  isPersistedId,
+  loadLetters,
+  loadWeeklyChores,
+  redeemInviteCode,
+  replaceWeeklyChores,
+  updateWeeklyChore,
+  upsertWeeklyStats,
+} from "@/lib/moaseong-db";
 
 type Screen =
   | "landing"
@@ -23,34 +44,7 @@ type Screen =
 type Assignee = "me" | "partner" | "none";
 type SocialProvider = "kakao" | "google";
 
-type Task = {
-  id: number;
-  title: string;
-  category: string;
-  assignee: Assignee;
-  done: boolean;
-  reacted: boolean;
-};
-
-type Letter = {
-  id: number;
-  from: "me" | "partner";
-  title: string;
-  body: string;
-  date: string;
-  reaction: string;
-};
-
 const emojis = ["🌷", "🐻", "🐰", "🦊", "🐶", "🐱", "🌙", "⭐", "🍀", "🍑", "🍞", "🧸", "🎀", "☁️", "💜"];
-
-const initialTasks: Task[] = [
-  { id: 1, title: "바닥 청소", category: "청소", assignee: "me", done: true, reacted: true },
-  { id: 2, title: "분리수거 하기", category: "청소", assignee: "partner", done: true, reacted: false },
-  { id: 3, title: "화장실 청소", category: "청소", assignee: "me", done: false, reacted: false },
-  { id: 4, title: "장보기", category: "생활", assignee: "partner", done: false, reacted: false },
-  { id: 5, title: "침구 정리", category: "정리정돈", assignee: "none", done: false, reacted: false },
-  { id: 6, title: "식물 물 주기", category: "생활", assignee: "partner", done: true, reacted: true },
-];
 
 const suggestedTasks = ["설거지", "빨래 널기", "냉장고 정리", "음식물 쓰레기 버리기"];
 
@@ -66,13 +60,18 @@ export default function Home() {
   const [selectedEmoji, setSelectedEmoji] = useState(emojis[0]);
   const [inviteCode, setInviteCode] = useState("");
   const [myCode, setMyCode] = useState("");
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [tasks, setTasks] = useState<AppTask[]>(defaultTasks);
   const [newTask, setNewTask] = useState("");
   const [letterBody, setLetterBody] = useState("");
   const [reaction, setReaction] = useState("💗");
-  const [letters, setLetters] = useState<Letter[]>([
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentCoupleId, setCurrentCoupleId] = useState<string | null>(null);
+  const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [letters, setLetters] = useState<AppLetter[]>([
     {
-      id: 1,
+      id: "sample-letter-1",
       from: "partner",
       title: "고마워",
       body: "오늘 청소 끝내줘서 정말 든든했어. 덕분에 저녁 시간이 훨씬 편해졌어.",
@@ -80,7 +79,7 @@ export default function Home() {
       reaction: "💗",
     },
     {
-      id: 2,
+      id: "sample-letter-2",
       from: "me",
       title: "최고야",
       body: "이번 주 장보기 맡아줘서 고마워. 작은 일들이 쌓여서 집이 완성되는 느낌이야.",
@@ -95,21 +94,100 @@ export default function Home() {
   const partnerDone = tasks.filter((task) => task.done && task.assignee === "partner").length;
 
   const groupedTasks = useMemo(() => {
-    return tasks.reduce<Record<string, Task[]>>((acc, task) => {
+    return tasks.reduce<Record<string, AppTask[]>>((acc, task) => {
       acc[task.category] = [...(acc[task.category] ?? []), task];
       return acc;
     }, {});
   }, [tasks]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       if (!data.session) return;
 
       const authIntent = window.localStorage.getItem("moaseong-auth-intent");
+      const profileDraft = getProfileDraft();
       window.localStorage.removeItem("moaseong-auth-intent");
+      window.localStorage.removeItem("moaseong-profile-draft");
+
+      await initializeUserData(data.session.user.id, profileDraft);
       setScreen(authIntent === "signup" ? "invite" : "home");
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const getSessionUserId = async () => {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user.id ?? null;
+  };
+
+  const getProfileDraft = () => {
+    const fallback = { nickname, avatarEmoji: selectedEmoji };
+    const rawDraft = window.localStorage.getItem("moaseong-profile-draft");
+    if (!rawDraft) return fallback;
+
+    try {
+      return JSON.parse(rawDraft) as { nickname: string; avatarEmoji: string };
+    } catch {
+      return fallback;
+    }
+  };
+
+  const syncCoupleState = (userId: string, couple: { id: string; user_a_id: string; user_b_id: string | null } | null) => {
+    setCurrentCoupleId(couple?.id ?? null);
+    setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
+  };
+
+  const loadCycleData = async (coupleId: string, userId: string) => {
+    const cycleId = await ensureCurrentCycle(coupleId);
+    const [savedTasks, savedLetters] = await Promise.all([loadWeeklyChores(cycleId), loadLetters(userId)]);
+
+    setCurrentCycleId(cycleId);
+    setTasks(savedTasks.length > 0 ? savedTasks : defaultTasks);
+    if (savedLetters.length > 0) setLetters(savedLetters);
+  };
+
+  const initializeUserData = async (userId: string, profileDraft?: { nickname: string; avatarEmoji: string }) => {
+    setCurrentUserId(userId);
+
+    const existingProfile = await getProfile(userId);
+    if (existingProfile) {
+      setNickname(existingProfile.nickname);
+      setSelectedEmoji(existingProfile.avatar_emoji);
+    } else {
+      await ensureProfile(userId, profileDraft?.nickname ?? nickname, profileDraft?.avatarEmoji ?? selectedEmoji);
+    }
+
+    const couple = await getCurrentCouple();
+    syncCoupleState(userId, couple);
+    if (couple) await loadCycleData(couple.id, userId);
+  };
+
+  const ensureSignedInUser = async () => {
+    const userId = currentUserId ?? await getSessionUserId();
+    if (!userId) {
+      window.alert("로그인이 필요해요.");
+      setScreen("login");
+      return null;
+    }
+
+    setCurrentUserId(userId);
+    return userId;
+  };
+
+  const ensureCoupleAndCycle = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return null;
+
+    const couple = currentCoupleId
+      ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
+      : await ensureCouple(userId);
+    syncCoupleState(userId, couple);
+
+    const cycleId = currentCycleId ?? await ensureCurrentCycle(couple.id);
+    setCurrentCycleId(cycleId);
+
+    return { userId, coupleId: couple.id, cycleId };
+  };
 
   const goHome = () => setScreen("home");
 
@@ -129,44 +207,171 @@ export default function Home() {
     }
   };
 
-  const createInviteCode = () => {
-    setMyCode("MOA-7284");
+  const handleProfileNext = async () => {
+    if (!nickname.trim()) {
+      window.alert("닉네임을 입력해 주세요.");
+      return;
+    }
+
+    window.localStorage.setItem(
+      "moaseong-profile-draft",
+      JSON.stringify({ nickname: nickname.trim(), avatarEmoji: selectedEmoji }),
+    );
+
+    if (currentUserId) await ensureProfile(currentUserId, nickname.trim(), selectedEmoji);
+    setScreen("social");
   };
 
-  const updateTask = (id: number, patch: Partial<Task>) => {
+  const createInviteCodeForUser = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    setIsSaving(true);
+    try {
+      await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
+      const { code, couple } = await createInviteCode(userId);
+      setMyCode(code);
+      syncCoupleState(userId, couple);
+      window.alert(`초대 코드가 생성됐어요: ${code}`);
+    } catch {
+      window.alert("초대 코드 생성에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateTask = async (id: string, patch: Partial<AppTask>) => {
     setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+
+    const userId = await ensureSignedInUser();
+    if (!userId || !isPersistedId(id)) return;
+
+    try {
+      await updateWeeklyChore(id, userId, patch);
+    } catch {
+      window.alert("할 일 저장에 실패했어요. 다시 시도해 주세요.");
+    }
   };
 
-  const addTask = () => {
+  const addTask = async () => {
     const title = newTask.trim();
     if (!title) return;
-    setTasks((current) => [
-      ...current,
-      { id: Date.now(), title, category: "추가한 일", assignee: "none", done: false, reacted: false },
-    ]);
-    setNewTask("");
+
+    const context = await ensureCoupleAndCycle();
+    if (!context) return;
+
+    try {
+      const savedTask = await insertWeeklyChore(context.cycleId, title);
+      setTasks((current) => [...current, savedTask]);
+      setNewTask("");
+    } catch {
+      window.alert("할 일 추가에 실패했어요. 다시 시도해 주세요.");
+    }
   };
 
-  const sendLetter = () => {
+  const saveWeeklyChoresAndGoHome = async () => {
+    const context = await ensureCoupleAndCycle();
+    if (!context) return;
+
+    setIsSaving(true);
+    try {
+      const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, tasks);
+      setTasks(savedTasks);
+      goHome();
+    } catch {
+      window.alert("이번 주 할 일 저장에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleInviteNext = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    setIsSaving(true);
+    try {
+      await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
+
+      if (inviteCode.trim()) {
+        const coupleId = await redeemInviteCode(inviteCode.trim());
+        const couple = await getCurrentCouple();
+        syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
+        await loadCycleData(coupleId, userId);
+      } else {
+        const couple = await ensureCouple(userId);
+        syncCoupleState(userId, couple);
+        await loadCycleData(couple.id, userId);
+      }
+
+      setScreen("chores");
+    } catch {
+      window.alert("초대 코드 처리에 실패했어요. 코드를 확인해 주세요.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const sendLetter = async (weekly = false) => {
     const body = letterBody.trim();
     if (!body) {
       window.alert("편지 내용을 입력해 주세요.");
       return;
     }
 
-    setLetters((current) => [
-      {
-        id: Date.now(),
-        from: "me",
-        title: "마음을 보냈어요",
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    try {
+      const savedLetter = await insertLetter({
+        cycleId: currentCycleId,
+        senderId: userId,
+        receiverId: partnerId,
         body,
-        date: "2026.07.08",
         reaction,
-      },
-      ...current,
-    ]);
-    setLetterBody("");
-    setScreen("sent");
+        weekly,
+      });
+
+      setLetters((current) => [savedLetter, ...current]);
+      setLetterBody("");
+      setScreen(weekly ? "stats" : "sent");
+    } catch {
+      window.alert("편지 전송에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
+
+  const handleReact = async (id: string) => {
+    await updateTask(id, { reacted: true });
+
+    const userId = await ensureSignedInUser();
+    if (!userId || !isPersistedId(id)) return;
+
+    try {
+      await addChoreReaction(id, userId, "💗");
+    } catch {
+      window.alert("리액션 저장에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
+
+  const closeWeek = async () => {
+    if (!currentCycleId) {
+      setScreen("weeklyLetter");
+      return;
+    }
+
+    try {
+      await upsertWeeklyStats({
+        cycleId: currentCycleId,
+        completionRate: progress,
+        meCompletedCount: meDone,
+        partnerCompletedCount: partnerDone,
+        sentLetterCount: letters.length,
+      });
+    } catch {
+      // 통계 저장 실패가 주간 마감 흐름 자체를 막지는 않게 둡니다.
+    }
+
+    setScreen("weeklyLetter");
   };
 
   const renderScreen = () => {
@@ -185,13 +390,7 @@ export default function Home() {
             selectedEmoji={selectedEmoji}
             onNicknameChange={setNickname}
             onEmojiChange={setSelectedEmoji}
-            onNext={() => {
-              if (!nickname.trim()) {
-                window.alert("닉네임을 입력해 주세요.");
-                return;
-              }
-              setScreen("social");
-            }}
+            onNext={handleProfileNext}
           />
         );
       case "social":
@@ -209,8 +408,9 @@ export default function Home() {
             inviteCode={inviteCode}
             myCode={myCode}
             onInviteCodeChange={setInviteCode}
-            onCreateCode={createInviteCode}
-            onNext={() => setScreen("chores")}
+            onCreateCode={createInviteCodeForUser}
+            onNext={handleInviteNext}
+            isSaving={isSaving}
           />
         );
       case "chores":
@@ -223,7 +423,8 @@ export default function Home() {
             onToggle={(id) => updateTask(id, { done: !tasks.find((task) => task.id === id)?.done })}
             onAssignee={(id, assignee) => updateTask(id, { assignee })}
             onAddTask={addTask}
-            onDone={goHome}
+            onDone={saveWeeklyChoresAndGoHome}
+            isSaving={isSaving}
           />
         );
       case "letter":
@@ -237,16 +438,13 @@ export default function Home() {
             onBodyChange={setLetterBody}
             onReactionChange={setReaction}
             onBack={goHome}
-            onSend={screen === "weeklyLetter" ? () => {
-              sendLetter();
-              setTimeout(() => setScreen("stats"), 0);
-            } : sendLetter}
+            onSend={() => sendLetter(screen === "weeklyLetter")}
           />
         );
       case "sent":
         return <SentScreen onHome={goHome} />;
       case "close":
-        return <CloseWeekScreen onCancel={goHome} onNext={() => setScreen("weeklyLetter")} />;
+        return <CloseWeekScreen onCancel={goHome} onNext={closeWeek} />;
       case "stats":
         return (
           <StatsScreen
@@ -281,7 +479,7 @@ export default function Home() {
             progress={progress}
             completeCount={completeCount}
             onToggle={(id) => updateTask(id, { done: !tasks.find((task) => task.id === id)?.done })}
-            onReact={(id) => updateTask(id, { reacted: true })}
+            onReact={handleReact}
             onWriteLetter={() => setScreen("letter")}
             onAddTask={() => setScreen("chores")}
             onCloseWeek={() => setScreen("close")}
@@ -385,12 +583,14 @@ function InviteScreen({
   onInviteCodeChange,
   onCreateCode,
   onNext,
+  isSaving,
 }: {
   inviteCode: string;
   myCode: string;
   onInviteCodeChange: (value: string) => void;
   onCreateCode: () => void;
   onNext: () => void;
+  isSaving: boolean;
 }) {
   return (
     <div className="stack-screen">
@@ -402,10 +602,10 @@ function InviteScreen({
       <div className="invite-card">
         <span>내 초대 코드</span>
         <strong>{myCode || "아직 생성하지 않았어요"}</strong>
-        <button className="secondary-button" onClick={onCreateCode}>{myCode ? "초대 코드 다시 보기" : "내 코드 생성하기"}</button>
+        <button className="secondary-button" disabled={isSaving} onClick={onCreateCode}>{myCode ? "초대 코드 다시 보기" : "내 코드 생성하기"}</button>
       </div>
-      <button className="primary-button sticky-bottom" onClick={onNext}>다음으로</button>
-      <button className="text-button" onClick={onNext}>나중에 연결할게요</button>
+      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onNext}>{isSaving ? "저장 중..." : "다음으로"}</button>
+      <button className="text-button" disabled={isSaving} onClick={onNext}>나중에 연결할게요</button>
     </div>
   );
 }
@@ -419,15 +619,17 @@ function ChoreSelectScreen({
   onAssignee,
   onAddTask,
   onDone,
+  isSaving,
 }: {
-  tasks: Task[];
-  groupedTasks: Record<string, Task[]>;
+  tasks: AppTask[];
+  groupedTasks: Record<string, AppTask[]>;
   newTask: string;
   onNewTaskChange: (value: string) => void;
-  onToggle: (id: number) => void;
-  onAssignee: (id: number, assignee: Assignee) => void;
+  onToggle: (id: string) => void;
+  onAssignee: (id: string, assignee: Assignee) => void;
   onAddTask: () => void;
   onDone: () => void;
+  isSaving: boolean;
 }) {
   return (
     <div className="stack-screen">
@@ -463,7 +665,7 @@ function ChoreSelectScreen({
       <div className="chip-row">
         {suggestedTasks.map((task) => <span key={task}>{task}</span>)}
       </div>
-      <button className="primary-button sticky-bottom" onClick={onDone}>선택완료 ({tasks.length}개)</button>
+      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onDone}>{isSaving ? "저장 중..." : `선택완료 (${tasks.length}개)`}</button>
     </div>
   );
 }
@@ -482,11 +684,11 @@ function HomeScreen({
 }: {
   nickname: string;
   selectedEmoji: string;
-  tasks: Task[];
+  tasks: AppTask[];
   progress: number;
   completeCount: number;
-  onToggle: (id: number) => void;
-  onReact: (id: number) => void;
+  onToggle: (id: string) => void;
+  onReact: (id: string) => void;
   onWriteLetter: () => void;
   onAddTask: () => void;
   onCloseWeek: () => void;
@@ -535,10 +737,10 @@ function TaskSection({
   onWriteLetter,
 }: {
   title: string;
-  tasks: Task[];
+  tasks: AppTask[];
   empty: string;
-  onToggle: (id: number) => void;
-  onReact: (id: number) => void;
+  onToggle: (id: string) => void;
+  onReact: (id: string) => void;
   onWriteLetter: () => void;
 }) {
   return (
@@ -683,7 +885,7 @@ function StatsScreen({
   );
 }
 
-function LettersScreen({ letters }: { letters: Letter[] }) {
+function LettersScreen({ letters }: { letters: AppLetter[] }) {
   return (
     <div className="stack-screen">
       <Header eyebrow="편지 모아" title="주고받은 마음" />
