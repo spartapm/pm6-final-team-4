@@ -198,6 +198,7 @@ export default function Home() {
       provider,
       options: {
         redirectTo: window.location.origin,
+        scopes: provider === "kakao" ? "profile_nickname" : undefined,
       },
     });
 
