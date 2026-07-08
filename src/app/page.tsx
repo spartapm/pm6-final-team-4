@@ -198,7 +198,6 @@ export default function Home() {
     };
 
     const resolveAuthRedirect = async () => {
-      const callbackCode = new URLSearchParams(window.location.search).get("code");
       const callbackError = getAuthCallbackError();
 
       if (callbackError) {
@@ -207,29 +206,14 @@ export default function Home() {
         return;
       }
 
-      if (callbackCode) {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(callbackCode);
-        if (data.session) {
-          await completeSignedInFlow(data.session.user.id);
-          return;
-        }
-
-        if (error) {
-          console.warn("Supabase OAuth code exchange failed.", error);
-          setAuthError(`Supabase 세션 교환 실패: ${error.message}`);
-          setIsAuthResolving(false);
-          return;
-        }
-      }
-
       const session = await waitForSession();
       if (session) {
         await completeSignedInFlow(session.user.id);
         return;
       }
 
-      if (callbackCode) {
-        setAuthError("카카오 로그인은 완료됐지만 Supabase 세션이 생성되지 않았어요. Supabase Kakao Provider의 Client Secret / Redirect URL 설정을 확인해 주세요.");
+      if (window.location.hash || window.location.search) {
+        setAuthError("카카오 로그인은 완료됐지만 Supabase 세션이 생성되지 않았어요. Supabase Kakao Provider 설정과 Redirect URL을 확인해 주세요.");
         setIsAuthResolving(false);
         return;
       }
