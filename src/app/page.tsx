@@ -6,17 +6,20 @@ import {
   addChoreReaction,
   AppLetter,
   AppTask,
+  AppWeeklyStat,
   createInviteCode,
   defaultTasks,
   ensureCouple,
   ensureCurrentCycle,
   ensureProfile,
+  getActiveInviteCode,
   getCurrentCouple,
   getProfile,
   insertLetter,
   insertWeeklyChore,
   isPersistedId,
   loadLetters,
+  loadWeeklyStats,
   loadWeeklyChores,
   redeemInviteCode,
   replaceWeeklyChores,
@@ -46,8 +49,6 @@ type SocialProvider = "kakao" | "google";
 
 const emojis = ["🌷", "🐻", "🐰", "🦊", "🐶", "🐱", "🌙", "⭐", "🍀", "🍑", "🍞", "🧸", "🎀", "☁️", "💜"];
 
-const suggestedTasks = ["설거지", "빨래 널기", "냉장고 정리", "음식물 쓰레기 버리기"];
-
 const assigneeLabel: Record<Assignee, string> = {
   me: "내가 할 일",
   partner: "파트너가 할 일",
@@ -56,11 +57,12 @@ const assigneeLabel: Record<Assignee, string> = {
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("landing");
-  const [nickname, setNickname] = useState("모아");
+  const [nickname, setNickname] = useState("");
   const [selectedEmoji, setSelectedEmoji] = useState(emojis[0]);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [myCode, setMyCode] = useState("");
-  const [tasks, setTasks] = useState<AppTask[]>(defaultTasks);
+  const [tasks, setTasks] = useState<AppTask[]>([]);
   const [newTask, setNewTask] = useState("");
   const [letterBody, setLetterBody] = useState("");
   const [reaction, setReaction] = useState("💗");
@@ -72,36 +74,21 @@ export default function Home() {
   const [isAuthResolving, setIsAuthResolving] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const isHandlingAuthRef = useRef(false);
-  const [letters, setLetters] = useState<AppLetter[]>([
-    {
-      id: "sample-letter-1",
-      from: "partner",
-      title: "고마워",
-      body: "오늘 청소 끝내줘서 정말 든든했어. 덕분에 저녁 시간이 훨씬 편해졌어.",
-      date: "2026.07.08",
-      reaction: "💗",
-    },
-    {
-      id: "sample-letter-2",
-      from: "me",
-      title: "최고야",
-      body: "이번 주 장보기 맡아줘서 고마워. 작은 일들이 쌓여서 집이 완성되는 느낌이야.",
-      date: "2026.07.07",
-      reaction: "👍",
-    },
-  ]);
+  const [letters, setLetters] = useState<AppLetter[]>([]);
+  const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
 
   const completeCount = tasks.filter((task) => task.done).length;
-  const progress = Math.round((completeCount / tasks.length) * 100);
+  const progress = tasks.length > 0 ? Math.round((completeCount / tasks.length) * 100) : 0;
   const meDone = tasks.filter((task) => task.done && task.assignee === "me").length;
   const partnerDone = tasks.filter((task) => task.done && task.assignee === "partner").length;
 
+  const choreSelectionTasks = tasks.length > 0 ? tasks : defaultTasks;
   const groupedTasks = useMemo(() => {
-    return tasks.reduce<Record<string, AppTask[]>>((acc, task) => {
+    return choreSelectionTasks.reduce<Record<string, AppTask[]>>((acc, task) => {
       acc[task.category] = [...(acc[task.category] ?? []), task];
       return acc;
     }, {});
-  }, [tasks]);
+  }, [choreSelectionTasks]);
 
   const getSessionUserId = async () => {
     const { data } = await supabase.auth.getSession();
@@ -109,7 +96,7 @@ export default function Home() {
   };
 
   const getProfileDraft = () => {
-    const fallback = { nickname, avatarEmoji: selectedEmoji };
+    const fallback = { nickname: nickname.trim() || "모아", avatarEmoji: selectedEmoji };
     const rawDraft = window.localStorage.getItem("moaseong-profile-draft");
     if (!rawDraft) return fallback;
 
@@ -127,11 +114,18 @@ export default function Home() {
 
   const loadCycleData = async (coupleId: string, userId: string) => {
     const cycleId = await ensureCurrentCycle(coupleId);
-    const [savedTasks, savedLetters] = await Promise.all([loadWeeklyChores(cycleId), loadLetters(userId)]);
+    const [savedTasks, savedLetters, savedStats] = await Promise.all([
+      loadWeeklyChores(cycleId),
+      loadLetters(userId),
+      loadWeeklyStats(coupleId),
+    ]);
 
     setCurrentCycleId(cycleId);
-    setTasks(savedTasks.length > 0 ? savedTasks : defaultTasks);
-    if (savedLetters.length > 0) setLetters(savedLetters);
+    setTasks(savedTasks);
+    setLetters(savedLetters);
+    setWeeklyStats(savedStats);
+
+    return savedTasks.length;
   };
 
   const initializeUserData = async (userId: string, profileDraft?: { nickname: string; avatarEmoji: string }) => {
@@ -142,12 +136,16 @@ export default function Home() {
       setNickname(existingProfile.nickname);
       setSelectedEmoji(existingProfile.avatar_emoji);
     } else {
-      await ensureProfile(userId, profileDraft?.nickname ?? nickname, profileDraft?.avatarEmoji ?? selectedEmoji);
+      await ensureProfile(userId, profileDraft?.nickname?.trim() || nickname.trim() || "모아", profileDraft?.avatarEmoji ?? selectedEmoji);
     }
 
     const couple = await getCurrentCouple();
+    const existingCode = await getActiveInviteCode(userId);
+    setMyCode(existingCode);
+
     syncCoupleState(userId, couple);
-    if (couple) await loadCycleData(couple.id, userId);
+    if (couple) return loadCycleData(couple.id, userId);
+    return 0;
   };
 
   const completeSignedInFlow = useCallback(async (userId: string) => {
@@ -159,13 +157,15 @@ export default function Home() {
     window.localStorage.removeItem("moaseong-auth-intent");
     window.localStorage.removeItem("moaseong-profile-draft");
 
+    let savedTaskCount = 0;
+
     try {
-      await initializeUserData(userId, profileDraft);
+      savedTaskCount = await initializeUserData(userId, profileDraft);
     } catch (error) {
       console.warn("Supabase data initialization failed after login.", error);
       setCurrentUserId(userId);
     } finally {
-      setScreen(authIntent === "signup" ? "invite" : "home");
+      setScreen(authIntent === "signup" ? "invite" : savedTaskCount > 0 ? "home" : "chores");
       if (window.location.hash || window.location.search) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
@@ -294,6 +294,11 @@ export default function Home() {
       return;
     }
 
+    if (!agreedToTerms) {
+      window.alert("이용약관에 동의해 주세요.");
+      return;
+    }
+
     window.localStorage.setItem(
       "moaseong-profile-draft",
       JSON.stringify({ nickname: nickname.trim(), avatarEmoji: selectedEmoji }),
@@ -356,7 +361,7 @@ export default function Home() {
 
     setIsSaving(true);
     try {
-      const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, tasks);
+      const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
       setTasks(savedTasks);
       goHome();
     } catch {
@@ -448,6 +453,7 @@ export default function Home() {
         partnerCompletedCount: partnerDone,
         sentLetterCount: letters.length,
       });
+      if (currentCoupleId) setWeeklyStats(await loadWeeklyStats(currentCoupleId));
     } catch {
       // 통계 저장 실패가 주간 마감 흐름 자체를 막지는 않게 둡니다.
     }
@@ -471,6 +477,8 @@ export default function Home() {
             selectedEmoji={selectedEmoji}
             onNicknameChange={setNickname}
             onEmojiChange={setSelectedEmoji}
+            agreedToTerms={agreedToTerms}
+            onTermsChange={setAgreedToTerms}
             onNext={handleProfileNext}
           />
         );
@@ -497,15 +505,25 @@ export default function Home() {
       case "chores":
         return (
           <ChoreSelectScreen
-            tasks={tasks}
+            tasks={choreSelectionTasks}
             groupedTasks={groupedTasks}
             newTask={newTask}
             onNewTaskChange={setNewTask}
-            onToggle={(id) => updateTask(id, { done: !tasks.find((task) => task.id === id)?.done })}
-            onAssignee={(id, assignee) => updateTask(id, { assignee })}
+            onToggle={(id) => setTasks((current) => {
+              const baseTasks = current.length > 0 ? current : defaultTasks;
+              return baseTasks.map((task) => (task.id === id ? { ...task, selected: !task.selected } : task));
+            })}
+            onAssignee={(id, assignee) => {
+              setTasks((current) => {
+                const baseTasks = current.length > 0 ? current : defaultTasks;
+                return baseTasks.map((task) => (task.id === id ? { ...task, assignee } : task));
+              });
+              if (isPersistedId(id)) void updateTask(id, { assignee });
+            }}
             onAddTask={addTask}
             onDone={saveWeeklyChoresAndGoHome}
             isSaving={isSaving}
+            hasSavedTasks={tasks.length > 0}
           />
         );
       case "letter":
@@ -539,7 +557,7 @@ export default function Home() {
       case "letters":
         return <LettersScreen letters={letters} />;
       case "castle":
-        return <CastleHistoryScreen progress={progress} />;
+        return <CastleHistoryScreen stats={weeklyStats} />;
       case "mypage":
         return (
           <MyPageScreen
@@ -624,12 +642,16 @@ function ProfileScreen({
   selectedEmoji,
   onNicknameChange,
   onEmojiChange,
+  agreedToTerms,
+  onTermsChange,
   onNext,
 }: {
   nickname: string;
   selectedEmoji: string;
   onNicknameChange: (value: string) => void;
   onEmojiChange: (value: string) => void;
+  agreedToTerms: boolean;
+  onTermsChange: (value: boolean) => void;
   onNext: () => void;
 }) {
   return (
@@ -655,7 +677,7 @@ function ProfileScreen({
         ))}
       </div>
       <label className="check-row">
-        <input type="checkbox" defaultChecked />
+        <input type="checkbox" checked={agreedToTerms} onChange={(event) => onTermsChange(event.target.checked)} />
         이용약관과 개인정보 처리방침에 동의합니다
       </label>
       <button className="primary-button sticky-bottom" onClick={onNext}>시작하기</button>
@@ -683,7 +705,7 @@ function SocialScreen({
         <button className="kakao-button" onClick={() => onLogin("kakao")}>카카오로 계속하기</button>
         <button className="google-button" onClick={() => onLogin("google")}>Google로 계속하기</button>
       </div>
-      <p className="helper-text">소셜 로그인은 Supabase Auth와 연결됩니다. 카카오/구글 provider 설정이 완료되어야 정상 동작합니다.</p>
+      <p className="helper-text">로그인하면 파트너와 함께 만든 기록이 안전하게 저장돼요.</p>
     </div>
   );
 }
@@ -736,6 +758,7 @@ function ChoreSelectScreen({
   onAddTask,
   onDone,
   isSaving,
+  hasSavedTasks,
 }: {
   tasks: AppTask[];
   groupedTasks: Record<string, AppTask[]>;
@@ -746,22 +769,25 @@ function ChoreSelectScreen({
   onAddTask: () => void;
   onDone: () => void;
   isSaving: boolean;
+  hasSavedTasks: boolean;
 }) {
   return (
     <div className="stack-screen">
       <Header eyebrow="이번 주" title="이번 주 할 일을 선택해요" />
-      <div className="notice-box">지난 주 선택 항목을 불러왔어요. 필요한 항목만 조정해 주세요.</div>
+      <div className="notice-box">
+        {hasSavedTasks ? "저장된 이번 주 항목을 불러왔어요. 필요한 항목만 조정해 주세요." : "자주 하는 집안일을 골라 이번 주 목록을 만들어 보세요."}
+      </div>
       <div className="category-list">
         {Object.entries(groupedTasks).map(([category, categoryTasks]) => (
           <section className="category-card" key={category}>
             <div className="category-head">
               <strong>{category}</strong>
-              <span>{categoryTasks.filter((task) => task.done).length}개 선택</span>
+              <span>{categoryTasks.filter((task) => task.selected).length}개 선택</span>
             </div>
             {categoryTasks.map((task) => (
               <div className="task-edit-row" key={task.id}>
                 <label>
-                  <input type="checkbox" checked={task.done} onChange={() => onToggle(task.id)} />
+                  <input type="checkbox" checked={task.selected} onChange={() => onToggle(task.id)} />
                   {task.title}
                 </label>
                 <select value={task.assignee} onChange={(event) => onAssignee(task.id, event.target.value as Assignee)}>
@@ -778,10 +804,7 @@ function ChoreSelectScreen({
         <input placeholder="직접 할 일 추가" value={newTask} onChange={(event) => onNewTaskChange(event.target.value)} />
         <button onClick={onAddTask}>추가</button>
       </div>
-      <div className="chip-row">
-        {suggestedTasks.map((task) => <span key={task}>{task}</span>)}
-      </div>
-      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onDone}>{isSaving ? "저장 중..." : `선택완료 (${tasks.length}개)`}</button>
+      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onDone}>{isSaving ? "저장 중..." : `선택완료 (${tasks.filter((task) => task.selected).length}개)`}</button>
     </div>
   );
 }
@@ -930,7 +953,7 @@ function LetterWriteScreen({
         title={weekly ? "이번 주를 마무리하는 마음을 남겨요" : "파트너에게 마음을 보내요"}
       />
       {weekly && <div className="notice-box">이번 주 성 완공률은 {progress}%예요. 편지를 보내면 다음 주로 넘어갈 수 있어요.</div>}
-      <div className="recipient-card">받는 사람 <strong>곰돌이</strong> 💗</div>
+      <div className="recipient-card">받는 사람 <strong>파트너</strong> 💗</div>
       <textarea
         className="letter-area"
         maxLength={1000}
@@ -1002,18 +1025,36 @@ function StatsScreen({
 }
 
 function LettersScreen({ letters }: { letters: AppLetter[] }) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const letterDays = new Set(
+    letters
+      .map((letter) => letter.date.match(/\d+/g)?.map(Number))
+      .filter((parts): parts is number[] => Boolean(parts && parts.length >= 3))
+      .filter(([letterYear, letterMonth]) => letterYear === year && letterMonth === month + 1)
+      .map(([, , day]) => day),
+  );
+
   return (
     <div className="stack-screen">
       <Header eyebrow="편지 모아" title="주고받은 마음" />
       <div className="calendar-card">
-        <div className="month-title">2026년 7월</div>
+        <div className="month-title">{year}년 {month + 1}월</div>
         <div className="calendar-grid">
-          {Array.from({ length: 31 }, (_, index) => (
-            <span className={[5, 7, 8, 15].includes(index + 1) ? "has-letter" : ""} key={index}>{index + 1}</span>
+          {Array.from({ length: daysInMonth }, (_, index) => (
+            <span className={letterDays.has(index + 1) ? "has-letter" : ""} key={index}>{index + 1}</span>
           ))}
         </div>
       </div>
-      {letters.map((letter) => (
+      {letters.length === 0 ? (
+        <EmptyState
+          icon="💌"
+          title="아직 주고받은 편지가 없어요"
+          description="완료한 집안일에 마음을 보내면 이곳에 차곡차곡 모여요."
+        />
+      ) : letters.map((letter) => (
         <article className="letter-card" key={letter.id}>
           <span>{letter.from === "me" ? "내가 보낸 편지" : "상대방이 보낸 편지"} · {letter.date}</span>
           <h3>{letter.reaction} {letter.title}</h3>
@@ -1024,23 +1065,28 @@ function LettersScreen({ letters }: { letters: AppLetter[] }) {
   );
 }
 
-function CastleHistoryScreen({ progress }: { progress: number }) {
-  const weeks = [100, 80, 90, progress, 70, 100];
-
+function CastleHistoryScreen({ stats }: { stats: AppWeeklyStat[] }) {
   return (
     <div className="stack-screen">
       <Header eyebrow="성 모아" title="매주 쌓은 우리의 기록" />
-      <div className="history-grid">
-        {weeks.map((value, index) => (
-          <article className={value >= 100 ? "history-card complete" : "history-card"} key={`${value}-${index}`}>
+      {stats.length === 0 ? (
+        <EmptyState
+          icon="🏰"
+          title="아직 완성된 주간 기록이 없어요"
+          description="이번 주를 마무리하면 성 완공률과 기여 기록이 이곳에 쌓여요."
+        />
+      ) : (
+        <div className="history-grid">
+          {stats.map((stat) => (
+          <article className={stat.completionRate >= 100 ? "history-card complete" : "history-card"} key={stat.id}>
             <div className="mini-castle">🏰</div>
-            <strong>{value}%</strong>
-            <span>2026.06.{10 + index * 7} - 06.{16 + index * 7}</span>
-            <div className="progress-bar"><span style={{ width: `${value}%` }} /></div>
+            <strong>{stat.completionRate}%</strong>
+            <span>{stat.weekStart} - {stat.weekEnd}</span>
+            <div className="progress-bar"><span style={{ width: `${stat.completionRate}%` }} /></div>
           </article>
-        ))}
-      </div>
-      <p className="helper-text">기록을 누르면 주간 통계 상세를 볼 수 있어요.</p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1075,6 +1121,16 @@ function MyPageScreen({
         <button>알림 설정 <span>›</span></button>
         <button>계정 설정 <span>›</span></button>
       </div>
+    </div>
+  );
+}
+
+function EmptyState({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return (
+    <div className="empty-state">
+      <div>{icon}</div>
+      <strong>{title}</strong>
+      <p>{description}</p>
     </div>
   );
 }
