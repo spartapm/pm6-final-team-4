@@ -69,6 +69,7 @@ export default function Home() {
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAuthResolving, setIsAuthResolving] = useState(true);
   const isHandlingAuthRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([
     {
@@ -167,15 +168,38 @@ export default function Home() {
       if (window.location.hash || window.location.search) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
+      setIsAuthResolving(false);
       isHandlingAuthRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) void completeSignedInFlow(data.session.user.id);
-    });
+    const resolveAuthRedirect = async () => {
+      const callbackCode = new URLSearchParams(window.location.search).get("code");
+
+      if (callbackCode) {
+        const { data, error } = await supabase.auth.exchangeCodeForSession(callbackCode);
+        if (data.session) {
+          await completeSignedInFlow(data.session.user.id);
+          return;
+        }
+
+        if (error) {
+          console.warn("Supabase OAuth code exchange failed.", error);
+        }
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        await completeSignedInFlow(data.session.user.id);
+        return;
+      }
+
+      setIsAuthResolving(false);
+    };
+
+    void resolveAuthRedirect();
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
       if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session) {
@@ -528,10 +552,20 @@ export default function Home() {
   return (
     <main className="app-shell">
       <section className="app-frame">
-        <div className={showNav ? "screen with-nav" : "screen"}>{renderScreen()}</div>
+        <div className={showNav ? "screen with-nav" : "screen"}>{isAuthResolving ? <AuthLoadingScreen /> : renderScreen()}</div>
         {showNav && <BottomNav current={screen} onChange={setScreen} />}
       </section>
     </main>
+  );
+}
+
+function AuthLoadingScreen() {
+  return (
+    <div className="center-screen gradient-bg">
+      <div className="logo-orb">🏰</div>
+      <h2>모아성</h2>
+      <p>로그인 정보를 확인하고 있어요</p>
+    </div>
   );
 }
 
