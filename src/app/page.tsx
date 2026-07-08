@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import {
   addChoreReaction,
@@ -69,6 +69,7 @@ export default function Home() {
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
   const [partnerId, setPartnerId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const isHandlingAuthRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([
     {
       id: "sample-letter-1",
@@ -99,21 +100,6 @@ export default function Home() {
       return acc;
     }, {});
   }, [tasks]);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!data.session) return;
-
-      const authIntent = window.localStorage.getItem("moaseong-auth-intent");
-      const profileDraft = getProfileDraft();
-      window.localStorage.removeItem("moaseong-auth-intent");
-      window.localStorage.removeItem("moaseong-profile-draft");
-
-      await initializeUserData(data.session.user.id, profileDraft);
-      setScreen(authIntent === "signup" ? "invite" : "home");
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const getSessionUserId = async () => {
     const { data } = await supabase.auth.getSession();
@@ -161,6 +147,46 @@ export default function Home() {
     syncCoupleState(userId, couple);
     if (couple) await loadCycleData(couple.id, userId);
   };
+
+  const completeSignedInFlow = useCallback(async (userId: string) => {
+    if (isHandlingAuthRef.current) return;
+    isHandlingAuthRef.current = true;
+
+    const authIntent = window.localStorage.getItem("moaseong-auth-intent");
+    const profileDraft = getProfileDraft();
+    window.localStorage.removeItem("moaseong-auth-intent");
+    window.localStorage.removeItem("moaseong-profile-draft");
+
+    try {
+      await initializeUserData(userId, profileDraft);
+    } catch (error) {
+      console.warn("Supabase data initialization failed after login.", error);
+      setCurrentUserId(userId);
+    } finally {
+      setScreen(authIntent === "signup" ? "invite" : "home");
+      if (window.location.hash || window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      isHandlingAuthRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) void completeSignedInFlow(data.session.user.id);
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === "SIGNED_IN" || event === "INITIAL_SESSION") && session) {
+        void completeSignedInFlow(session.user.id);
+      }
+    });
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
+  }, [completeSignedInFlow]);
 
   const ensureSignedInUser = async () => {
     const userId = currentUserId ?? await getSessionUserId();
@@ -536,7 +562,11 @@ function ProfileScreen({
 }) {
   return (
     <div className="stack-screen">
-      <Header eyebrow="회원가입" title="나를 표현해 주세요" />
+      <div className="onboarding-brand">
+        <div className="logo-orb">🏰</div>
+        <h2>모아성</h2>
+        <p>나를 표현할 이모지를 골라주세요</p>
+      </div>
       <label className="field">
         <span>닉네임</span>
         <input value={nickname} maxLength={10} onChange={(event) => onNicknameChange(event.target.value)} />
@@ -603,6 +633,11 @@ function InviteScreen({
 }) {
   return (
     <div className="stack-screen">
+      <div className="partner-hero">
+        <span>{emojis[0]}</span>
+        <span>💗</span>
+        <span>🐻</span>
+      </div>
       <Header eyebrow="파트너 초대" title="같이 성을 지을 파트너를 연결해요" />
       <label className="field">
         <span>파트너 초대 코드</span>
