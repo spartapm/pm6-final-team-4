@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type Screen =
   | "landing"
@@ -20,6 +21,7 @@ type Screen =
   | "mypage";
 
 type Assignee = "me" | "partner" | "none";
+type SocialProvider = "kakao" | "google";
 
 type Task = {
   id: number;
@@ -99,7 +101,33 @@ export default function Home() {
     }, {});
   }, [tasks]);
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (!data.session) return;
+
+      const authIntent = window.localStorage.getItem("moaseong-auth-intent");
+      window.localStorage.removeItem("moaseong-auth-intent");
+      setScreen(authIntent === "signup" ? "invite" : "home");
+    });
+  }, []);
+
   const goHome = () => setScreen("home");
+
+  const handleSocialLogin = async (provider: SocialProvider, mode: "social" | "login") => {
+    window.localStorage.setItem("moaseong-auth-intent", mode === "social" ? "signup" : "login");
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      window.localStorage.removeItem("moaseong-auth-intent");
+      window.alert("로그인에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
 
   const createInviteCode = () => {
     setMyCode("MOA-7284");
@@ -172,7 +200,7 @@ export default function Home() {
           <SocialScreen
             mode={screen}
             onBack={() => setScreen(screen === "social" ? "profile" : "landing")}
-            onNext={() => setScreen(screen === "social" ? "invite" : "home")}
+            onLogin={(provider) => handleSocialLogin(provider, screen)}
           />
         );
       case "invite":
@@ -326,7 +354,15 @@ function ProfileScreen({
   );
 }
 
-function SocialScreen({ mode, onBack, onNext }: { mode: "social" | "login"; onBack: () => void; onNext: () => void }) {
+function SocialScreen({
+  mode,
+  onBack,
+  onLogin,
+}: {
+  mode: "social" | "login";
+  onBack: () => void;
+  onLogin: (provider: SocialProvider) => void;
+}) {
   return (
     <div className="stack-screen">
       <button className="icon-button" onClick={onBack}>‹</button>
@@ -335,10 +371,10 @@ function SocialScreen({ mode, onBack, onNext }: { mode: "social" | "login"; onBa
         title={mode === "social" ? "계정을 연결하면 기록이 안전하게 저장돼요" : "다시 만나서 반가워요"}
       />
       <div className="social-card">
-        <button className="kakao-button" onClick={onNext}>카카오로 계속하기</button>
-        <button className="google-button" onClick={onNext}>Google로 계속하기</button>
+        <button className="kakao-button" onClick={() => onLogin("kakao")}>카카오로 계속하기</button>
+        <button className="google-button" onClick={() => onLogin("google")}>Google로 계속하기</button>
       </div>
-      <p className="helper-text">MVP에서는 버튼을 누르면 다음 단계로 이동합니다.</p>
+      <p className="helper-text">소셜 로그인은 Supabase Auth와 연결됩니다. 카카오/구글 provider 설정이 완료되어야 정상 동작합니다.</p>
     </div>
   );
 }
