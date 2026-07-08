@@ -266,27 +266,10 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <section className="phone">
-        <div className="status-bar">
-          <span>9:41</span>
-          <span className="dynamic-island" />
-          <span>LTE 82%</span>
-        </div>
+      <section className="app-frame">
         <div className={showNav ? "screen with-nav" : "screen"}>{renderScreen()}</div>
         {showNav && <BottomNav current={screen} onChange={setScreen} />}
       </section>
-      <aside className="brief">
-        <p className="eyebrow">Moaseong MVP</p>
-        <h1>가사 완료와 인정이 쌓여 성이 완성되는 서비스</h1>
-        <p>
-          명세서 기준 핵심 플로우를 클릭 가능한 Next.js 프로토타입으로 구성했습니다.
-          온보딩, 할 일 선택, 홈, 편지, 성 히스토리, 마이페이지를 한 번에 시연할 수 있습니다.
-        </p>
-        <div className="brief-card">
-          <strong>현재 완공률 {progress}%</strong>
-          <span>{completeCount} / {tasks.length}개 완료</span>
-        </div>
-      </aside>
     </main>
   );
 }
