@@ -142,6 +142,17 @@ input[type="checkbox"] {
   margin-bottom: 4px;
 }
 
+.logo-orb.compact {
+  width: 58px;
+  height: 58px;
+}
+
+.logo-orb img {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+}
+
 h1,
 h2,
 h3,
@@ -197,13 +208,6 @@ h3 {
   text-align: center;
 }
 
-.onboarding-brand .logo-orb {
-  width: 58px;
-  height: 58px;
-  margin-bottom: 2px;
-  font-size: 26px;
-}
-
 .onboarding-brand p {
   color: var(--muted);
   font-size: 12px;
@@ -227,6 +231,12 @@ h3 {
   background: linear-gradient(135deg, #ffe2f2, #f4e8ff);
   box-shadow: var(--shadow);
   font-size: 28px;
+}
+
+.partner-hero img {
+  width: 74%;
+  height: 74%;
+  object-fit: contain;
 }
 
 .partner-hero span:nth-child(2) {
@@ -344,6 +354,13 @@ h3 {
   font-size: 20px;
 }
 
+.emoji-choice img,
+.reaction-picker img {
+  width: 78%;
+  height: 78%;
+  object-fit: contain;
+}
+
 .emoji-choice.selected,
 .reaction-picker button.selected {
   border-color: var(--primary);
@@ -396,6 +413,12 @@ h3 {
   font-size: 25px;
 }
 
+.empty-state img {
+  width: 80%;
+  height: 80%;
+  object-fit: contain;
+}
+
 .empty-state strong {
   font-size: 15px;
   font-weight: 900;
@@ -415,14 +438,29 @@ h3 {
 }
 
 .kakao-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   background: #fee500;
   color: #2b2010;
 }
 
 .google-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   background: white;
   color: #312a35;
   border: 1px solid var(--line);
+}
+
+.kakao-button img,
+.google-button img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
 .helper-text {
@@ -553,58 +591,17 @@ h3 {
 }
 
 .castle-visual {
-  position: relative;
-  height: 170px;
+  display: grid;
+  place-items: center;
+  min-height: 182px;
   border-radius: 20px;
   background: linear-gradient(#ffd5e7, #fff7df 65%, #d9f2bd);
 }
 
-.castle-ground {
-  position: absolute;
-  right: 48px;
-  bottom: 34px;
-  left: 48px;
-  height: 32px;
-  transform: rotate(-4deg);
-  border-radius: 50%;
-  background: #8eb55b;
-}
-
-.castle-base,
-.castle-tower {
-  position: absolute;
-  background: linear-gradient(135deg, #d7b8ff, #ffb8d8);
-  box-shadow: inset 0 -8px 0 rgba(124, 77, 166, 0.12);
-}
-
-.castle-base {
-  right: 104px;
-  bottom: 56px;
-  left: 104px;
-  height: 48px;
-  border-radius: 12px 12px 6px 6px;
-}
-
-.castle-tower {
-  bottom: 56px;
-  width: 32px;
-  height: 68px;
-  border-radius: 12px 12px 6px 6px;
-}
-
-.castle-tower.left {
-  left: 86px;
-}
-
-.castle-tower.right {
-  right: 86px;
-}
-
-.castle-flag {
-  position: absolute;
-  top: 42px;
-  left: 50%;
-  transform: translateX(-50%);
+.castle-visual img {
+  width: min(78%, 220px);
+  max-height: 158px;
+  object-fit: contain;
 }
 
 .progress-info strong {
@@ -670,6 +667,12 @@ h3 {
   padding: 0 9px;
 }
 
+.reaction-row img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
 .empty {
   color: var(--muted);
   font-size: 13px;
@@ -692,6 +695,9 @@ h3 {
 }
 
 .recipient-card {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 13px 14px;
   color: var(--muted);
   font-size: 13px;
@@ -699,6 +705,11 @@ h3 {
 
 .recipient-card strong {
   color: var(--ink);
+}
+
+.recipient-card img {
+  width: 18px;
+  height: 18px;
 }
 
 .letter-area {
@@ -820,6 +831,12 @@ h3 {
   font-size: 34px;
 }
 
+.mini-castle img {
+  width: 76%;
+  height: 76%;
+  object-fit: contain;
+}
+
 .history-card span {
   color: var(--muted);
   font-size: 10px;
@@ -837,6 +854,12 @@ h3 {
   border-radius: var(--radius-md);
   background: var(--purple-soft);
   font-size: 26px;
+}
+
+.avatar img {
+  width: 82%;
+  height: 82%;
+  object-fit: contain;
 }
 
 .profile-card div:nth-child(2) {
@@ -907,7 +930,16 @@ h3 {
 }
 
 .bottom-nav span {
-  font-size: 18px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+}
+
+.bottom-nav img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .bottom-nav button.active {

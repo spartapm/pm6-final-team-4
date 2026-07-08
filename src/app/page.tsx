@@ -1,7 +1,51 @@
 "use client";
 
+import Image, { type StaticImageData } from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import avatarCream from "../../icons/avatar-cream.svg";
+import avatarCool from "../../icons/avatar-cool.svg";
+import avatarCrystal from "../../icons/avatar-crystal.svg";
+import avatarGalaxy from "../../icons/avatar-galaxy.svg";
+import avatarKing from "../../icons/avatar-king.svg";
+import avatarLaundry from "../../icons/avatar-laundry.svg";
+import avatarLove from "../../icons/avatar-love.svg";
+import avatarMint from "../../icons/avatar-mint.svg";
+import avatarPeach from "../../icons/avatar-peach.svg";
+import avatarPink from "../../icons/avatar-pink.svg";
+import avatarPurple from "../../icons/avatar-purple.svg";
+import avatarQueen from "../../icons/avatar-queen.svg";
+import avatarRainbow from "../../icons/avatar-rainbow.svg";
+import avatarSky from "../../icons/avatar-sky.svg";
+import avatarYellow from "../../icons/avatar-yellow.svg";
+import bottomNavCalander from "../../icons/bottomNav-calander.svg";
+import bottomNavCastle from "../../icons/bottomNav-castle.svg";
+import bottomNavHome from "../../icons/bottomNav-home.svg";
+import bottomNavMypage from "../../icons/bottomNav-mypage.svg";
+import castleLevel1 from "../../castle_image/성1단계.svg";
+import castleLevel2 from "../../castle_image/성2단계.svg";
+import castleLevel3 from "../../castle_image/성3단계.svg";
+import castleLevel4 from "../../castle_image/성4단계.svg";
+import castleLevel5 from "../../castle_image/성5단계.svg";
+import castleLevel6 from "../../castle_image/성6단계.svg";
+import castleLevel7 from "../../castle_image/성7단계.svg";
+import castleLevel8 from "../../castle_image/성8단계.svg";
+import castleLevel9 from "../../castle_image/성9단계.svg";
+import castleLevel10 from "../../castle_image/성10단계.svg";
+import commonHeartOutline from "../../icons/common-heart-outline.svg";
+import commonNotification from "../../icons/common-notification.svg";
+import commonWarning from "../../icons/common-warning.svg";
+import mainLogo from "../../icons/main-logo.svg";
+import reactionClap from "../../icons/reaction-clap.svg";
+import reactionClover from "../../icons/reaction-clover.svg";
+import reactionFlower from "../../icons/reaction-flower.svg";
+import reactionHeartPink from "../../icons/reaction-heart-pink.svg";
+import reactionLetter from "../../icons/reaction-letter.svg";
+import reactionLike from "../../icons/reaction-like.svg";
+import reactionSparkle from "../../icons/reaction-sparkle.svg";
+import reactionStar from "../../icons/reaction-star.svg";
+import snsGoogle from "../../icons/sns-google.svg";
+import snsKakao from "../../icons/sns-kakao.svg";
 import {
   addChoreReaction,
   AppLetter,
@@ -46,8 +90,48 @@ type Screen =
 
 type Assignee = "me" | "partner" | "none";
 type SocialProvider = "kakao" | "google";
+type AssetModule = string | StaticImageData;
 
-const emojis = ["🌷", "🐻", "🐰", "🦊", "🐶", "🐱", "🌙", "⭐", "🍀", "🍑", "🍞", "🧸", "🎀", "☁️", "💜"];
+const avatarOptions = [
+  { id: "avatar-pink", src: avatarPink, label: "핑크" },
+  { id: "avatar-purple", src: avatarPurple, label: "퍼플" },
+  { id: "avatar-mint", src: avatarMint, label: "민트" },
+  { id: "avatar-peach", src: avatarPeach, label: "피치" },
+  { id: "avatar-yellow", src: avatarYellow, label: "옐로우" },
+  { id: "avatar-sky", src: avatarSky, label: "스카이" },
+  { id: "avatar-rainbow", src: avatarRainbow, label: "레인보우" },
+  { id: "avatar-love", src: avatarLove, label: "러브" },
+  { id: "avatar-cream", src: avatarCream, label: "크림" },
+  { id: "avatar-cool", src: avatarCool, label: "쿨" },
+  { id: "avatar-crystal", src: avatarCrystal, label: "크리스탈" },
+  { id: "avatar-galaxy", src: avatarGalaxy, label: "갤럭시" },
+  { id: "avatar-king", src: avatarKing, label: "킹" },
+  { id: "avatar-queen", src: avatarQueen, label: "퀸" },
+  { id: "avatar-laundry", src: avatarLaundry, label: "런드리" },
+];
+
+const castleLevels = [
+  castleLevel1,
+  castleLevel2,
+  castleLevel3,
+  castleLevel4,
+  castleLevel5,
+  castleLevel6,
+  castleLevel7,
+  castleLevel8,
+  castleLevel9,
+  castleLevel10,
+];
+
+const reactionOptions = [
+  { value: "💗", src: reactionHeartPink, label: "하트" },
+  { value: "👍", src: reactionLike, label: "좋아요" },
+  { value: "🌸", src: reactionFlower, label: "꽃" },
+  { value: "🍀", src: reactionClover, label: "클로버" },
+  { value: "☀️", src: reactionSparkle, label: "반짝" },
+  { value: "👏", src: reactionClap, label: "박수" },
+  { value: "⭐", src: reactionStar, label: "별" },
+];
 
 const assigneeLabel: Record<Assignee, string> = {
   me: "내가 할 일",
@@ -58,7 +142,7 @@ const assigneeLabel: Record<Assignee, string> = {
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("landing");
   const [nickname, setNickname] = useState("");
-  const [selectedEmoji, setSelectedEmoji] = useState(emojis[0]);
+  const [selectedEmoji, setSelectedEmoji] = useState(avatarOptions[0].id);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [myCode, setMyCode] = useState("");
@@ -607,7 +691,7 @@ export default function Home() {
 function AuthLoadingScreen() {
   return (
     <div className="center-screen gradient-bg">
-      <div className="logo-orb">🏰</div>
+      <LogoMark />
       <h2>모아성</h2>
       <p>로그인 정보를 확인하고 있어요</p>
     </div>
@@ -617,7 +701,7 @@ function AuthLoadingScreen() {
 function AuthErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="center-screen">
-      <div className="logo-orb">⚠️</div>
+      <IconBubble src={commonWarning} alt="경고" />
       <h2>로그인 연결에 실패했어요</h2>
       <p>{message}</p>
       <button className="primary-button" onClick={onRetry}>다시 로그인하기</button>
@@ -628,7 +712,7 @@ function AuthErrorScreen({ message, onRetry }: { message: string; onRetry: () =>
 function StartScreen({ onStart, onLogin }: { onStart: () => void; onLogin: () => void }) {
   return (
     <div className="center-screen gradient-bg">
-      <div className="logo-orb">🏰</div>
+      <LogoMark />
       <h2>모아성</h2>
       <p>작은 집안일 하나가 모여 우리의 성이 됩니다</p>
       <button className="primary-button" onClick={onStart}>새로 시작하기</button>
@@ -657,22 +741,23 @@ function ProfileScreen({
   return (
     <div className="stack-screen">
       <div className="onboarding-brand">
-        <div className="logo-orb">🏰</div>
+        <LogoMark compact />
         <h2>모아성</h2>
-        <p>나를 표현할 이모지를 골라주세요</p>
+        <p>나를 표현할 아바타를 골라주세요</p>
       </div>
       <label className="field">
         <span>닉네임</span>
         <input value={nickname} maxLength={10} onChange={(event) => onNicknameChange(event.target.value)} />
       </label>
       <div className="emoji-grid">
-        {emojis.map((emoji) => (
+        {avatarOptions.map((avatar) => (
           <button
-            className={emoji === selectedEmoji ? "emoji-choice selected" : "emoji-choice"}
-            key={emoji}
-            onClick={() => onEmojiChange(emoji)}
+            aria-label={avatar.label}
+            className={avatar.id === selectedEmoji ? "emoji-choice selected" : "emoji-choice"}
+            key={avatar.id}
+            onClick={() => onEmojiChange(avatar.id)}
           >
-            {emoji}
+            <AssetImage src={avatar.src} alt="" />
           </button>
         ))}
       </div>
@@ -702,8 +787,8 @@ function SocialScreen({
         title={mode === "social" ? "계정을 연결하면 기록이 안전하게 저장돼요" : "다시 만나서 반가워요"}
       />
       <div className="social-card">
-        <button className="kakao-button" onClick={() => onLogin("kakao")}>카카오로 계속하기</button>
-        <button className="google-button" onClick={() => onLogin("google")}>Google로 계속하기</button>
+        <button className="kakao-button" onClick={() => onLogin("kakao")}><AssetImage src={snsKakao} alt="" />카카오로 계속하기</button>
+        <button className="google-button" onClick={() => onLogin("google")}><AssetImage src={snsGoogle} alt="" />Google로 계속하기</button>
       </div>
       <p className="helper-text">로그인하면 파트너와 함께 만든 기록이 안전하게 저장돼요.</p>
     </div>
@@ -728,9 +813,9 @@ function InviteScreen({
   return (
     <div className="stack-screen">
       <div className="partner-hero">
-        <span>{emojis[0]}</span>
-        <span>💗</span>
-        <span>🐻</span>
+        <span><AvatarMark value="avatar-pink" /></span>
+        <span><AssetImage src={reactionHeartPink} alt="" /></span>
+        <span><AvatarMark value="avatar-mint" /></span>
       </div>
       <Header eyebrow="파트너 초대" title="같이 성을 지을 파트너를 연결해요" />
       <label className="field">
@@ -839,7 +924,7 @@ function HomeScreen({
           <span className="eyebrow">우리의 이번 주</span>
           <h2>{nickname}성 공사 중</h2>
         </div>
-        <button className="round-button">🔔</button>
+        <button className="round-button" aria-label="알림"><AssetImage src={commonNotification} alt="" /></button>
       </div>
       <CastleCard progress={progress} completeCount={completeCount} total={tasks.length} />
       <TaskSection
@@ -894,9 +979,15 @@ function TaskSection({
           <small>{assigneeLabel[task.assignee]}</small>
           {task.done && (
             <div className="reaction-row">
-              <button onClick={() => onReact(task.id)}>{task.reacted ? "💗" : "🤍"}</button>
-              <button onClick={onWriteLetter}>💌</button>
-              <button>⭐</button>
+              <button aria-label="하트 리액션" onClick={() => onReact(task.id)}>
+                <AssetImage src={task.reacted ? reactionHeartPink : commonHeartOutline} alt="" />
+              </button>
+              <button aria-label="편지 쓰기" onClick={onWriteLetter}>
+                <AssetImage src={reactionLetter} alt="" />
+              </button>
+              <button aria-label="칭찬 표시">
+                <AssetImage src={reactionStar} alt="" />
+              </button>
             </div>
           )}
         </div>
@@ -906,14 +997,13 @@ function TaskSection({
 }
 
 function CastleCard({ progress, completeCount, total }: { progress: number; completeCount: number; total: number }) {
+  const levelIndex = Math.min(castleLevels.length - 1, Math.max(0, Math.ceil(progress / 10) - 1));
+  const castleSrc = castleLevels[levelIndex];
+
   return (
     <section className="castle-card">
       <div className="castle-visual">
-        <div className="castle-ground" />
-        <div className="castle-base" style={{ opacity: 0.35 + progress / 160 }} />
-        <div className="castle-tower left" />
-        <div className="castle-tower right" />
-        <div className="castle-flag">🏳️</div>
+        <AssetImage src={castleSrc} alt={`성 완공률 ${progress}%`} />
       </div>
       <div className="progress-info">
         <span>{completeCount}/{total} 완료</span>
@@ -943,8 +1033,6 @@ function LetterWriteScreen({
   onBack: () => void;
   onSend: () => void;
 }) {
-  const reactions = ["💗", "👍", "😍", "🥹", "🌸", "🍀", "☀️", "👏"];
-
   return (
     <div className="stack-screen">
       <button className="icon-button" onClick={onBack}>×</button>
@@ -953,7 +1041,7 @@ function LetterWriteScreen({
         title={weekly ? "이번 주를 마무리하는 마음을 남겨요" : "파트너에게 마음을 보내요"}
       />
       {weekly && <div className="notice-box">이번 주 성 완공률은 {progress}%예요. 편지를 보내면 다음 주로 넘어갈 수 있어요.</div>}
-      <div className="recipient-card">받는 사람 <strong>파트너</strong> 💗</div>
+      <div className="recipient-card">받는 사람 <strong>파트너</strong> <AssetImage src={reactionHeartPink} alt="" /></div>
       <textarea
         className="letter-area"
         maxLength={1000}
@@ -962,8 +1050,10 @@ function LetterWriteScreen({
         onChange={(event) => onBodyChange(event.target.value)}
       />
       <div className="reaction-picker">
-        {reactions.map((item) => (
-          <button className={reaction === item ? "selected" : ""} key={item} onClick={() => onReactionChange(item)}>{item}</button>
+        {reactionOptions.map((item) => (
+          <button aria-label={item.label} className={reaction === item.value ? "selected" : ""} key={item.value} onClick={() => onReactionChange(item.value)}>
+            <AssetImage src={item.src} alt="" />
+          </button>
         ))}
       </div>
       <button className="primary-button sticky-bottom" onClick={onSend}>편지 보내기</button>
@@ -974,7 +1064,7 @@ function LetterWriteScreen({
 function SentScreen({ onHome }: { onHome: () => void }) {
   return (
     <div className="center-screen">
-      <div className="logo-orb">💌</div>
+      <IconBubble src={reactionLetter} alt="편지" />
       <h2>마음이 잘 도착했어요</h2>
       <p>파트너가 오늘의 고마움을 확인할 수 있어요.</p>
       <button className="primary-button" onClick={onHome}>홈으로 돌아가기</button>
@@ -1050,7 +1140,7 @@ function LettersScreen({ letters }: { letters: AppLetter[] }) {
       </div>
       {letters.length === 0 ? (
         <EmptyState
-          icon="💌"
+          icon={reactionLetter}
           title="아직 주고받은 편지가 없어요"
           description="완료한 집안일에 마음을 보내면 이곳에 차곡차곡 모여요."
         />
@@ -1071,7 +1161,7 @@ function CastleHistoryScreen({ stats }: { stats: AppWeeklyStat[] }) {
       <Header eyebrow="성 모아" title="매주 쌓은 우리의 기록" />
       {stats.length === 0 ? (
         <EmptyState
-          icon="🏰"
+          icon={castleLevel1}
           title="아직 완성된 주간 기록이 없어요"
           description="이번 주를 마무리하면 성 완공률과 기여 기록이 이곳에 쌓여요."
         />
@@ -1079,7 +1169,7 @@ function CastleHistoryScreen({ stats }: { stats: AppWeeklyStat[] }) {
         <div className="history-grid">
           {stats.map((stat) => (
           <article className={stat.completionRate >= 100 ? "history-card complete" : "history-card"} key={stat.id}>
-            <div className="mini-castle">🏰</div>
+            <div className="mini-castle"><AssetImage src={castleLevels[Math.min(castleLevels.length - 1, Math.max(0, Math.ceil(stat.completionRate / 10) - 1))]} alt="" /></div>
             <strong>{stat.completionRate}%</strong>
             <span>{stat.weekStart} - {stat.weekEnd}</span>
             <div className="progress-bar"><span style={{ width: `${stat.completionRate}%` }} /></div>
@@ -1108,7 +1198,7 @@ function MyPageScreen({
     <div className="stack-screen">
       <Header eyebrow="마이페이지" title="내 정보와 설정" />
       <div className="profile-card">
-        <div className="avatar">{selectedEmoji}</div>
+        <div className="avatar"><AvatarMark value={selectedEmoji} /></div>
         <div>
           <strong>{nickname}</strong>
           <span>{myCode || "초대 코드 없음"}</span>
@@ -1125,10 +1215,37 @@ function MyPageScreen({
   );
 }
 
-function EmptyState({ icon, title, description }: { icon: string; title: string; description: string }) {
+function AssetImage({ src, alt }: { src: AssetModule; alt: string }) {
+  return <Image src={src} alt={alt} width={96} height={96} unoptimized />;
+}
+
+function LogoMark({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={compact ? "logo-orb compact" : "logo-orb"}>
+      <AssetImage src={mainLogo} alt="모아성" />
+    </div>
+  );
+}
+
+function IconBubble({ src, alt }: { src: AssetModule; alt: string }) {
+  return (
+    <div className="logo-orb">
+      <AssetImage src={src} alt={alt} />
+    </div>
+  );
+}
+
+function AvatarMark({ value }: { value: string }) {
+  const avatar = avatarOptions.find((item) => item.id === value);
+  if (!avatar) return <span>{value}</span>;
+
+  return <AssetImage src={avatar.src} alt="" />;
+}
+
+function EmptyState({ icon, title, description }: { icon: AssetModule; title: string; description: string }) {
   return (
     <div className="empty-state">
-      <div>{icon}</div>
+      <div><AssetImage src={icon} alt="" /></div>
       <strong>{title}</strong>
       <p>{description}</p>
     </div>
@@ -1145,11 +1262,11 @@ function Header({ eyebrow, title }: { eyebrow: string; title: string }) {
 }
 
 function BottomNav({ current, onChange }: { current: Screen; onChange: (screen: Screen) => void }) {
-  const items: { screen: Screen; label: string; icon: string }[] = [
-    { screen: "home", label: "홈", icon: "🏠" },
-    { screen: "letters", label: "편지", icon: "💌" },
-    { screen: "castle", label: "성", icon: "🏰" },
-    { screen: "mypage", label: "마이페이지", icon: "👤" },
+  const items: { screen: Screen; label: string; icon: AssetModule }[] = [
+    { screen: "home", label: "홈", icon: bottomNavHome },
+    { screen: "letters", label: "편지", icon: bottomNavCalander },
+    { screen: "castle", label: "성", icon: bottomNavCastle },
+    { screen: "mypage", label: "마이페이지", icon: bottomNavMypage },
   ];
 
   return (
@@ -1160,7 +1277,7 @@ function BottomNav({ current, onChange }: { current: Screen; onChange: (screen: 
           key={item.screen}
           onClick={() => onChange(item.screen)}
         >
-          <span>{item.icon}</span>
+          <span><AssetImage src={item.icon} alt="" /></span>
           {item.label}
         </button>
       ))}
