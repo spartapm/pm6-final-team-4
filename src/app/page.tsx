@@ -70,6 +70,7 @@ export default function Home() {
   const [partnerId, setPartnerId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isAuthResolving, setIsAuthResolving] = useState(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const isHandlingAuthRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([
     {
@@ -175,6 +176,17 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const getAuthCallbackError = () => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      return (
+        searchParams.get("error_description")
+        ?? searchParams.get("error")
+        ?? hashParams.get("error_description")
+        ?? hashParams.get("error")
+      );
+    };
+
     const waitForSession = async () => {
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const { data } = await supabase.auth.getSession();
@@ -187,6 +199,13 @@ export default function Home() {
 
     const resolveAuthRedirect = async () => {
       const callbackCode = new URLSearchParams(window.location.search).get("code");
+      const callbackError = getAuthCallbackError();
+
+      if (callbackError) {
+        setAuthError(`카카오 로그인 콜백 오류: ${decodeURIComponent(callbackError)}`);
+        setIsAuthResolving(false);
+        return;
+      }
 
       if (callbackCode) {
         const { data, error } = await supabase.auth.exchangeCodeForSession(callbackCode);
@@ -197,12 +216,21 @@ export default function Home() {
 
         if (error) {
           console.warn("Supabase OAuth code exchange failed.", error);
+          setAuthError(`Supabase 세션 교환 실패: ${error.message}`);
+          setIsAuthResolving(false);
+          return;
         }
       }
 
       const session = await waitForSession();
       if (session) {
         await completeSignedInFlow(session.user.id);
+        return;
+      }
+
+      if (callbackCode) {
+        setAuthError("카카오 로그인은 완료됐지만 Supabase 세션이 생성되지 않았어요. Supabase Kakao Provider의 Client Secret / Redirect URL 설정을 확인해 주세요.");
+        setIsAuthResolving(false);
         return;
       }
 
@@ -562,7 +590,12 @@ export default function Home() {
   return (
     <main className="app-shell">
       <section className="app-frame">
-        <div className={showNav ? "screen with-nav" : "screen"}>{isAuthResolving ? <AuthLoadingScreen /> : renderScreen()}</div>
+        <div className={showNav ? "screen with-nav" : "screen"}>
+          {isAuthResolving ? <AuthLoadingScreen /> : authError ? <AuthErrorScreen message={authError} onRetry={() => {
+            setAuthError(null);
+            setScreen("login");
+          }} /> : renderScreen()}
+        </div>
         {showNav && <BottomNav current={screen} onChange={setScreen} />}
       </section>
     </main>
@@ -575,6 +608,17 @@ function AuthLoadingScreen() {
       <div className="logo-orb">🏰</div>
       <h2>모아성</h2>
       <p>로그인 정보를 확인하고 있어요</p>
+    </div>
+  );
+}
+
+function AuthErrorScreen({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="center-screen">
+      <div className="logo-orb">⚠️</div>
+      <h2>로그인 연결에 실패했어요</h2>
+      <p>{message}</p>
+      <button className="primary-button" onClick={onRetry}>다시 로그인하기</button>
     </div>
   );
 }
