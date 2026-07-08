@@ -193,12 +193,20 @@ export default function Home() {
 
   const handleSocialLogin = async (provider: SocialProvider, mode: "social" | "login") => {
     window.localStorage.setItem("moaseong-auth-intent", mode === "social" ? "signup" : "login");
+    const kakaoScopes = "profile_nickname profile_image";
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
       options: {
         redirectTo: window.location.origin,
-        scopes: provider === "kakao" ? "profile_nickname" : undefined,
+        ...(provider === "kakao"
+          ? {
+              scopes: kakaoScopes,
+              queryParams: {
+                scope: kakaoScopes,
+              },
+            }
+          : {}),
       },
     });
 
