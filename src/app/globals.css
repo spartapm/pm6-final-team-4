@@ -79,6 +79,7 @@ input[type="checkbox"] {
   margin: 0 auto;
   background: var(--bg);
   box-shadow: var(--shadow-strong);
+  overflow-x: hidden;
 }
 
 .screen {
@@ -300,6 +301,15 @@ h3 {
   background: white;
   color: var(--ink);
   box-shadow: 0 8px 20px rgba(120, 80, 140, 0.1);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.icon-button img,
+.round-button img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
 }
 
 .field {
@@ -501,6 +511,12 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+}
+
+.home-head > div:first-child {
+  min-width: 0;
+  flex: 1;
 }
 
 .category-head span,
@@ -991,6 +1007,12 @@ h3 {
 
 .notification-button {
   position: relative;
+  flex-shrink: 0;
+}
+
+.notification-button img {
+  width: 20px;
+  height: 20px;
 }
 
 .notification-button .badge {
