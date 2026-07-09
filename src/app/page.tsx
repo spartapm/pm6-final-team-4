@@ -32,6 +32,7 @@ import castleLevel7 from "../../castle_image/성7단계.svg";
 import castleLevel8 from "../../castle_image/성8단계.svg";
 import castleLevel9 from "../../castle_image/성9단계.svg";
 import castleLevel10 from "../../castle_image/성10단계.svg";
+import commonAi from "../../icons/common-ai.svg";
 import commonAlarm from "../../icons/common-alarm.svg";
 import commonCheckboxFilled from "../../icons/common-checkbox-filled.svg";
 import commonCheckboxOutline from "../../icons/common-checkbox-outline.svg";
@@ -68,6 +69,13 @@ import reactionTeary from "../../icons/reaction-teary.svg";
 import snsKakao from "../../icons/sns-kakao.svg";
 import { AlertDialog, ConfirmDialog, ModalOverlay } from "@/components/modals";
 import { categoryMeta, catalogTitlesForCategory, formatHomeWeekRange, formatReportWeekRange, formatWeekRangeLabel, iconKeyForCategory, normalizeCategory, taskIconMap } from "@/lib/chore-catalog";
+import {
+  ICEBREAKER_PERSPECTIVES,
+  type IcebreakerPerspective,
+  type IcebreakerPhrases,
+  requestIcebreakerPhrases,
+  subjectParticleName,
+} from "@/lib/icebreaker-ai";
 import {
   addChoreReaction,
   AppChoreTemplate,
@@ -256,8 +264,11 @@ export default function Home() {
   const [weeklyLetterStatus, setWeeklyLetterStatus] = useState({ meSent: false, partnerSent: false, bothSent: false });
   const [notificationEnabled, setNotificationEnabled] = useState(true);
   const [showWeekClosePopup, setShowWeekClosePopup] = useState(false);
+  const [showIcebreakerAi, setShowIcebreakerAi] = useState(false);
+  const [icebreakerPhrasesCache, setIcebreakerPhrasesCache] = useState<IcebreakerPhrases | null>(null);
   const [closingWeekRange, setClosingWeekRange] = useState<{ weekStart: string; weekEnd: string } | null>(null);
   const [closingWeekProgress, setClosingWeekProgress] = useState(0);
+  const [closingWeekTasks, setClosingWeekTasks] = useState<AppTask[]>([]);
   const [statsEntry, setStatsEntry] = useState<"letter" | "castle">("letter");
   const [reportTasks, setReportTasks] = useState<AppTask[]>([]);
   const [reportMeta, setReportMeta] = useState<{
@@ -351,6 +362,7 @@ export default function Home() {
       const choreRate = weekChores.length > 0 ? (doneCount / weekChores.length) * 80 : 0;
       const letterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
       setClosingWeekProgress(Math.round(choreRate + letterRate));
+      setClosingWeekTasks(weekChores);
       setClosingWeekRange(range);
       setShowWeekClosePopup(true);
       window.localStorage.setItem(weekCloseStorageKey(userId, range.weekStart), "pending");
@@ -1211,6 +1223,7 @@ export default function Home() {
       if (!weekly) setLastSentLetter(savedLetter);
       setLetterBody("");
       setReaction("");
+      setIcebreakerPhrasesCache(null);
 
       if (weekly && targetCycleId && currentCoupleId) {
         if (closingWeekRange) {
@@ -1231,6 +1244,7 @@ export default function Home() {
         setStatsComplete(complete);
         setWeekStreak(await countCompletedWeekStreak(currentCoupleId));
         setClosingWeekProgress(weekProgress);
+        setClosingWeekTasks(weekChores);
         setReportTasks(weekChores);
         setReportMeta({
           progress: weekProgress,
@@ -1378,6 +1392,7 @@ export default function Home() {
     const range = currentWeekRange();
     setClosingWeekRange(range);
     setClosingWeekProgress(progress);
+    setClosingWeekTasks(tasks);
     if (currentUserId) {
       window.localStorage.setItem(weekCloseStorageKey(currentUserId, range.weekStart), "pending");
     }
@@ -1443,6 +1458,7 @@ export default function Home() {
         setWeeklyLetterStatus(letterStatus);
         setLetters(weekLetters);
         setReportTasks(weekChores);
+        setClosingWeekTasks(weekChores);
         setClosingWeekProgress(weekProgress);
         setStatsComplete(letterStatus.bothSent && weekProgress >= 100);
         setReportMeta({
@@ -1549,6 +1565,7 @@ export default function Home() {
             onBodyChange={setLetterBody}
             onReactionChange={setReaction}
             onBack={goHome}
+            onOpenAi={() => setShowIcebreakerAi(true)}
             onEmpty={() => showAlert("알림", "편지 내용을 입력해 주세요.")}
             onSend={requestSendInstantLetter}
           />
@@ -1564,6 +1581,7 @@ export default function Home() {
             partnerProfile={partnerProfile}
             onBodyChange={setLetterBody}
             onReactionChange={setReaction}
+            onOpenAi={() => setShowIcebreakerAi(true)}
             onEmpty={() => showAlert("알림", "편지를 입력해 주세요.")}
             onSend={requestSendWeeklyLetter}
           />
@@ -1577,6 +1595,7 @@ export default function Home() {
             onWriteAgain={() => {
               setLetterBody("");
               setReaction("");
+              setIcebreakerPhrasesCache(null);
               setScreen("letter");
             }}
           />
@@ -1916,6 +1935,26 @@ export default function Home() {
           weekEnd={closingWeekRange?.weekEnd ?? currentWeekRange(-1).weekEnd}
           progress={closingWeekProgress || progress}
           onWriteLetter={openWeeklyLetterFromClosePopup}
+        />
+      )}
+
+      {showIcebreakerAi && (
+        <IcebreakerAiModal
+          partnerNickname={partnerProfile?.nickname?.trim() || "파트너"}
+          tasks={
+            screen === "weeklyLetter" && closingWeekTasks.length > 0
+              ? closingWeekTasks
+              : tasks
+          }
+          cachedPhrases={icebreakerPhrasesCache}
+          onPhrasesLoaded={setIcebreakerPhrasesCache}
+          onClose={() => setShowIcebreakerAi(false)}
+          onApply={(phrase) => {
+            setLetterBody((current) => appendIcebreakerPhrase(current, phrase));
+            setShowIcebreakerAi(false);
+          }}
+          showAlert={showAlert}
+          showConfirm={showConfirm}
         />
       )}
 
@@ -2830,6 +2869,7 @@ function LetterWriteScreen({
   onBodyChange,
   onReactionChange,
   onBack,
+  onOpenAi,
   onEmpty,
   onSend,
 }: {
@@ -2839,6 +2879,7 @@ function LetterWriteScreen({
   onBodyChange: (value: string) => void;
   onReactionChange: (value: string) => void;
   onBack: () => void;
+  onOpenAi: () => void;
   onEmpty: () => void;
   onSend: () => void;
 }) {
@@ -2889,10 +2930,15 @@ function LetterWriteScreen({
         <AssetImage src={reactionHeartPink} alt="" />
       </div>
 
+      <button className="weekly-ai-button instant-ai-button" type="button" onClick={onOpenAi}>
+        <AssetImage src={commonAi} alt="" />
+        말문 틔우기(AI)
+      </button>
+
       <div className="instant-letter-card">
         <span className="instant-letter-date">{todayLabel}</span>
         <textarea
-          placeholder="마음을 담아 자유롭게 써봐요 🌸"
+          placeholder="파트너에게 마음을 담아 자유롭게 써봐요"
           value={body}
           onChange={(event) => handleBodyChange(event.target.value)}
         />
@@ -2943,6 +2989,7 @@ function WeeklyLetterScreen({
   partnerProfile,
   onBodyChange,
   onReactionChange,
+  onOpenAi,
   onEmpty,
   onSend,
 }: {
@@ -2954,6 +3001,7 @@ function WeeklyLetterScreen({
   partnerProfile: AppPartnerProfile | null;
   onBodyChange: (value: string) => void;
   onReactionChange: (value: string) => void;
+  onOpenAi: () => void;
   onEmpty: () => void;
   onSend: () => void;
 }) {
@@ -3007,6 +3055,11 @@ function WeeklyLetterScreen({
             <AssetImage src={reactionHeartPink} alt="" />
           </div>
         </div>
+
+        <button className="weekly-ai-button" type="button" onClick={onOpenAi}>
+          <AssetImage src={commonAi} alt="" />
+          말문 틔우기(AI)
+        </button>
 
         <div className="weekly-letter-field">
           <textarea
@@ -3114,6 +3167,246 @@ function formatWeekCloseBadge(weekStart: string, weekEnd: string) {
   const start = new Date(`${weekStart}T00:00:00`);
   const end = new Date(`${weekEnd}T00:00:00`);
   return `${start.getMonth() + 1}/${start.getDate()} – ${end.getMonth() + 1}/${end.getDate()} · 이번 주 마감`;
+}
+
+/** 공백 제외 1000자 한도 안에서 문구를 이어붙임 (초과분은 절삭) */
+function appendIcebreakerPhrase(current: string, phrase: string) {
+  const base = current.trim() ? `${current.trim()}\n` : "";
+  let kept = base;
+  let count = base.replace(/\s/g, "").length;
+  for (const char of phrase) {
+    if (/\s/.test(char)) {
+      kept += char;
+      continue;
+    }
+    if (count >= 1000) break;
+    kept += char;
+    count += 1;
+  }
+  return kept;
+}
+
+function IcebreakerAiModal({
+  partnerNickname,
+  tasks,
+  cachedPhrases,
+  onPhrasesLoaded,
+  onClose,
+  onApply,
+  showAlert,
+  showConfirm,
+}: {
+  partnerNickname: string;
+  tasks: AppTask[];
+  cachedPhrases: IcebreakerPhrases | null;
+  onPhrasesLoaded: (phrases: IcebreakerPhrases) => void;
+  onClose: () => void;
+  onApply: (phrase: string) => void;
+  showAlert: (title: string, message: string) => void;
+  showConfirm: (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    confirmLabel?: string,
+    cancelLabel?: string,
+  ) => void;
+}) {
+  const partnerDoneTasks = tasks.filter((task) => task.done && task.assignee === "partner");
+  const totalCount = tasks.length;
+  const completedCount = partnerDoneTasks.length;
+  const contributionRate = totalCount === 0 ? 0 : Math.round((completedCount / totalCount) * 100);
+  const completedItems = partnerDoneTasks.map((task) => task.title);
+  const labelName = subjectParticleName(partnerNickname);
+
+  const [expandedAllChips, setExpandedAllChips] = useState(false);
+  const [expandedPerspectives, setExpandedPerspectives] = useState<Record<IcebreakerPerspective, boolean>>({
+    "완료한 일 짚어주기": false,
+    "내 마음 표현하기": false,
+    "다음 주 응원하기": false,
+  });
+  const [phrases, setPhrases] = useState<IcebreakerPhrases | null>(cachedPhrases);
+  const [loading, setLoading] = useState(!cachedPhrases);
+  const [selectedPhrase, setSelectedPhrase] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState<Record<IcebreakerPerspective, number>>({
+    "완료한 일 짚어주기": 1,
+    "내 마음 표현하기": 1,
+    "다음 주 응원하기": 1,
+  });
+
+  useEffect(() => {
+    if (cachedPhrases) {
+      setPhrases(cachedPhrases);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    void requestIcebreakerPhrases({
+      partnerNickname,
+      weeklySummary: {
+        completed_count: completedCount,
+        total_count: totalCount,
+        contribution_rate: contributionRate,
+        completed_items: completedItems,
+      },
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setPhrases(result);
+        onPhrasesLoaded(result);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoading(false);
+        showAlert("알림", "응답에 실패했습니다. 다시 시도해주세요.");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 모달 오픈 시 1회만 호출 (캐시 없으면)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const visibleChips = expandedAllChips ? completedItems : completedItems.slice(0, 4);
+  const hiddenChipCount = Math.max(0, completedItems.length - 4);
+
+  const requestApply = () => {
+    if (!selectedPhrase) return;
+    showConfirm(
+      "",
+      `'${selectedPhrase}' 문장을 적용하시겠습니까?`,
+      () => onApply(selectedPhrase),
+      "확인",
+      "취소",
+    );
+  };
+
+  return (
+    <div className="icebreaker-overlay" role="presentation">
+      <div
+        className="icebreaker-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="icebreaker-title"
+      >
+        <div className="icebreaker-header">
+          <h2 id="icebreaker-title">
+            <span className="icebreaker-title-icon"><AssetImage src={commonAi} alt="" /></span>
+            말문 틔우기
+          </h2>
+          <button className="bottom-sheet-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+        </div>
+
+        <section className="icebreaker-summary">
+          <h3>{labelName} 한 일</h3>
+          {totalCount === 0 ? (
+            <p className="icebreaker-empty">이번 주 등록된 할일이 아직 없어요</p>
+          ) : completedCount === 0 ? (
+            <p className="icebreaker-empty">아직 {labelName} 완료한 일이 없어요</p>
+          ) : (
+            <>
+              <div className="icebreaker-summary-stats">
+                <strong>{completedCount} / {totalCount}개 완료</strong>
+                <em>기여율 {contributionRate}%</em>
+              </div>
+              <div className="icebreaker-chips">
+                {visibleChips.map((title, index) => (
+                  <span className="icebreaker-chip" key={`${title}-${index}`}>
+                    <i>✓</i>
+                    {title}
+                  </span>
+                ))}
+                {!expandedAllChips && hiddenChipCount > 0 && (
+                  <button
+                    className="icebreaker-chip more"
+                    type="button"
+                    onClick={() => setExpandedAllChips(true)}
+                  >
+                    +{hiddenChipCount}개 더
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="icebreaker-perspectives">
+          <h3>어떤 얘기부터 시작할까요?</h3>
+          {loading && <p className="icebreaker-loading">문구를 준비하고 있어요...</p>}
+          <div className="icebreaker-perspective-list">
+            {ICEBREAKER_PERSPECTIVES.map((perspective) => {
+              const open = expandedPerspectives[perspective];
+              const list = phrases?.[perspective] ?? [];
+              const showCount = visibleCount[perspective];
+
+              return (
+                <div className={`icebreaker-perspective${open ? " open" : ""}`} key={perspective}>
+                  <button
+                    className="icebreaker-perspective-head"
+                    type="button"
+                    onClick={() => {
+                      if (loading) return;
+                      if (!phrases) {
+                        showAlert("알림", "응답에 실패했습니다. 다시 시도해주세요.");
+                        return;
+                      }
+                      setExpandedPerspectives((current) => ({
+                        ...current,
+                        [perspective]: !current[perspective],
+                      }));
+                    }}
+                  >
+                    <span>{perspective}</span>
+                    {phrases && <em aria-hidden>{open ? "▲" : "▽"}</em>}
+                  </button>
+                  {open && (
+                    <div className="icebreaker-phrase-block">
+                      <span className="icebreaker-phrase-label">AI 추천 문구</span>
+                      <div className="icebreaker-phrase-list">
+                        {list.slice(0, showCount).map((phrase) => (
+                          <button
+                            key={phrase}
+                            type="button"
+                            className={selectedPhrase === phrase ? "selected" : ""}
+                            onClick={() => setSelectedPhrase(phrase)}
+                          >
+                            {phrase}
+                          </button>
+                        ))}
+                      </div>
+                      {showCount < list.length && (
+                        <button
+                          className="icebreaker-more-phrases"
+                          type="button"
+                          onClick={() => setVisibleCount((current) => ({
+                            ...current,
+                            [perspective]: list.length,
+                          }))}
+                        >
+                          AI 추천 문구 더보기
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <button
+          className="icebreaker-apply"
+          type="button"
+          disabled={!selectedPhrase}
+          onClick={requestApply}
+        >
+          적용하기
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function WeekClosePopup({
