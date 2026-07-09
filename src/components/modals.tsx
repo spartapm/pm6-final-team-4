@@ -12,15 +12,28 @@ export function ModalOverlay({ children, onClose }: { children: ReactNode; onClo
   );
 }
 
+function DialogMessage({ message }: { message: string }) {
+  return (
+    <p className="modal-message solo">
+      {message.split("\n").map((line, index) => (
+        <span key={`${line}-${index}`}>
+          {index > 0 ? <br /> : null}
+          {line}
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = "확인",
-  cancelLabel = "취소",
+  confirmLabel = "네",
+  cancelLabel = "아니오",
   onConfirm,
   onCancel,
 }: {
-  title: string;
+  title?: string;
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -29,30 +42,30 @@ export function ConfirmDialog({
 }) {
   return (
     <ModalOverlay onClose={onCancel}>
-      <h2>{title}</h2>
-      <p>{message}</p>
+      {title ? <h2 className="modal-title">{title}</h2> : null}
+      {title ? <p className="modal-message">{message}</p> : <DialogMessage message={message} />}
       <div className="modal-actions">
-        <button className="ghost-button" onClick={onCancel}>{cancelLabel}</button>
-        <button className="primary-button" onClick={onConfirm}>{confirmLabel}</button>
+        <button className="modal-cancel" type="button" onClick={onCancel}>{cancelLabel}</button>
+        <button className="modal-confirm" type="button" onClick={onConfirm}>{confirmLabel}</button>
       </div>
     </ModalOverlay>
   );
 }
 
 export function AlertDialog({
-  title,
+  title = "알림",
   message,
   onClose,
 }: {
-  title: string;
+  title?: string;
   message: string;
   onClose: () => void;
 }) {
   return (
     <ModalOverlay onClose={onClose}>
-      <h2>{title}</h2>
-      <p>{message}</p>
-      <button className="primary-button" onClick={onClose}>확인</button>
+      <h2 className="modal-title">{title}</h2>
+      <p className="modal-message">{message}</p>
+      <button className="modal-confirm full" type="button" onClick={onClose}>확인</button>
     </ModalOverlay>
   );
 }

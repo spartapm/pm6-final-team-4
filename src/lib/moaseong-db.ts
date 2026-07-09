@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { buildCatalogTasks, TaskIconKey } from "@/lib/chore-catalog";
+import { buildCatalogTasks, iconKeyForCategory, TaskIconKey } from "@/lib/chore-catalog";
 
 export type Assignee = "me" | "partner" | "none";
 
@@ -107,10 +107,6 @@ type ChoreTemplateRow = {
 export const defaultTasks: AppTask[] = buildCatalogTasks();
 
 export const isPersistedId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
-
-function iconKeyForCategory(category: string): TaskIconKey | undefined {
-  return defaultTasks.find((task) => task.category === category)?.iconKey;
-}
 
 function mapChoreRow(task: WeeklyChoreRow): AppTask {
   return {

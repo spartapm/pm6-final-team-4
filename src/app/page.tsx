@@ -46,7 +46,7 @@ import reactionSparkle from "../../icons/reaction-sparkle.svg";
 import reactionStar from "../../icons/reaction-star.svg";
 import snsKakao from "../../icons/sns-kakao.svg";
 import { AlertDialog, ConfirmDialog, ModalOverlay } from "@/components/modals";
-import { categoryCatalog, taskIconMap } from "@/lib/chore-catalog";
+import { categoryCatalog, formatWeekRangeLabel, iconKeyForCategory, taskIconMap } from "@/lib/chore-catalog";
 import {
   addChoreReaction,
   AppChoreTemplate,
@@ -61,6 +61,7 @@ import {
   createChoreTemplate,
   createInviteCode,
   createNotification,
+  currentWeekRange,
   deleteChoreTemplate,
   ensureCouple,
   ensureCurrentCycle,
@@ -71,7 +72,6 @@ import {
   getProfile,
   getWeeklyLetterStatus,
   insertLetter,
-  insertWeeklyChore,
   isPersistedId,
   loadChoreTemplates,
   loadLetters,
@@ -120,14 +120,15 @@ type Screen =
   | "accountSettings";
 
 type DialogState =
-  | { kind: "alert"; title: string; message: string }
+  | { kind: "alert"; title?: string; message: string; onClose?: () => void }
   | {
       kind: "confirm";
-      title: string;
+      title?: string;
       message: string;
       confirmLabel?: string;
       cancelLabel?: string;
       onConfirm: () => void;
+      onCancel?: () => void;
     }
   | null;
 
@@ -190,6 +191,7 @@ export default function Home() {
   const [myCode, setMyCode] = useState("");
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [newTask, setNewTask] = useState("");
+  const [addingCategory, setAddingCategory] = useState<string | null>(null);
   const [letterBody, setLetterBody] = useState("");
   const [reaction, setReaction] = useState("💗");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -210,6 +212,7 @@ export default function Home() {
   const [templateDraft, setTemplateDraft] = useState({ title: "", category: "기타" });
   const [dialog, setDialog] = useState<DialogState>(null);
   const [showInviteCodeModal, setShowInviteCodeModal] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [choreMode, setChoreMode] = useState<"first" | "repeat">("first");
   const [statsComplete, setStatsComplete] = useState(false);
@@ -217,14 +220,23 @@ export default function Home() {
   const [weeklyLetterStatus, setWeeklyLetterStatus] = useState({ meSent: false, partnerSent: false, bothSent: false });
   const [notificationEnabled, setNotificationEnabled] = useState(true);
 
-  const showAlert = (title: string, message: string) => setDialog({ kind: "alert", title, message });
+  const showAlert = (title: string, message: string, onClose?: () => void) => setDialog({ kind: "alert", title, message, onClose });
   const showConfirm = (
     title: string,
     message: string,
     onConfirm: () => void,
-    confirmLabel = "확인",
-    cancelLabel = "취소",
-  ) => setDialog({ kind: "confirm", title, message, onConfirm, confirmLabel, cancelLabel });
+    confirmLabel = "네",
+    cancelLabel = "아니오",
+    onCancel?: () => void,
+  ) => setDialog({
+    kind: "confirm",
+    title: title || undefined,
+    message,
+    onConfirm,
+    confirmLabel,
+    cancelLabel,
+    onCancel,
+  });
 
   const completeCount = tasks.filter((task) => task.done).length;
   const progress = tasks.length > 0 ? Math.round((completeCount / tasks.length) * 100) : 0;
@@ -346,12 +358,26 @@ export default function Home() {
       savedTaskCount = initResult.savedTaskCount;
 
       if (authIntent === "signup" && !initResult.isNewUser) {
-        showConfirm("이미 존재하는 계정이에요", "로그인할까요?", () => setScreen(savedTaskCount > 0 ? "home" : "chores"), "네", "아니오");
+        setScreen("social");
+        showConfirm(
+          "",
+          "이미 존재하는 계정이에요. 로그인할까요?",
+          () => setScreen(savedTaskCount > 0 ? "home" : "chores"),
+          "네",
+          "아니오",
+        );
         return;
       }
 
       if (authIntent === "login" && initResult.isNewUser) {
-        showConfirm("회원가입 할까요?", "아직 가입된 계정이 없어요. 새로 시작할까요?", () => setScreen("profile"), "가입할게요", "아니요");
+        setScreen("login");
+        showConfirm(
+          "",
+          "가입된 계정이 없어요.\n회원가입 할까요?",
+          () => setScreen("profile"),
+          "네",
+          "아니오",
+        );
         return;
       }
 
@@ -363,7 +389,8 @@ export default function Home() {
         const couple = await ensureCouple(userId);
         syncCoupleState(userId, couple);
         await prepareChoreSelection(couple.id, userId);
-        setScreen("chores");
+        setScreen("login");
+        showAlert("알림", "아직 할 일을 설정하지 않았어요. 지금 설정해볼까요?", () => setScreen("chores"));
       }
     } catch (error) {
       console.warn("Supabase data initialization failed after login.", error);
@@ -486,18 +513,22 @@ export default function Home() {
     setIsLoggingIn(false);
     if (error) {
       window.localStorage.removeItem("moaseong-auth-intent");
-      showAlert("로그인 실패", "로그인에 실패했어요. 다시 시도해 주세요.");
+      const isNetworkError = !navigator.onLine || /network|fetch|Failed to fetch/i.test(error.message);
+      showAlert(
+        "알림",
+        isNetworkError ? "인터넷 연결을 확인해 주세요." : "로그인에 실패했어요. 다시 시도해 주세요.",
+      );
     }
   };
 
   const handleProfileNext = async () => {
     if (!nickname.trim()) {
-      showAlert("닉네임 입력", "닉네임을 입력해 주세요.");
+      showAlert("알림", "닉네임을 입력해 주세요.");
       return;
     }
 
     if (!agreedToTerms) {
-      showAlert("약관 동의", "이용약관에 동의해 주세요.");
+      showAlert("알림", "이용약관에 동의해 주세요.");
       return;
     }
 
@@ -510,7 +541,17 @@ export default function Home() {
     setScreen("social");
   };
 
+  const showToast = (message: string) => {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage((current) => (current === message ? null : current)), 1800);
+  };
+
   const createInviteCodeForUser = async () => {
+    if (myCode) {
+      setShowInviteCodeModal(true);
+      return;
+    }
+
     const userId = await ensureSignedInUser();
     if (!userId) return;
 
@@ -521,8 +562,9 @@ export default function Home() {
       setMyCode(code);
       syncCoupleState(userId, couple);
       setShowInviteCodeModal(true);
-    } catch {
-      showAlert("코드 생성 실패", "초대 코드 생성에 실패했어요. 다시 시도해 주세요.");
+    } catch (error) {
+      const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
+      showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : "초대 코드 생성에 실패했어요. 다시 시도해 주세요.");
     } finally {
       setIsSaving(false);
     }
@@ -532,9 +574,9 @@ export default function Home() {
     if (!myCode) return;
     try {
       await navigator.clipboard.writeText(myCode);
-      showAlert("복사 완료", "초대 코드를 복사했어요.");
+      showToast("복사되었습니다.");
     } catch {
-      showAlert("복사 실패", "코드를 직접 복사해 주세요.");
+      showAlert("알림", "코드를 직접 복사해 주세요.");
     }
   };
 
@@ -558,22 +600,6 @@ export default function Home() {
       }
     } catch {
       showAlert("저장 실패", "할 일 저장에 실패했어요. 다시 시도해 주세요.");
-    }
-  };
-
-  const addTask = async () => {
-    const title = newTask.trim();
-    if (!title) return;
-
-    const context = await ensureCoupleAndCycle();
-    if (!context) return;
-
-    try {
-      const savedTask = await insertWeeklyChore(context.cycleId, title);
-      setTasks((current) => [...current, savedTask]);
-      setNewTask("");
-    } catch {
-      showAlert("추가 실패", "할 일 추가에 실패했어요. 다시 시도해 주세요.");
     }
   };
 
@@ -686,8 +712,42 @@ export default function Home() {
     )));
   };
 
-  const deselectAllChores = () => {
-    setTasks((current) => current.map((task) => ({ ...task, selected: false })));
+  const setAllChoresSelected = (selected: boolean) => {
+    setTasks((current) => current.map((task) => ({ ...task, selected })));
+  };
+
+  const setCategoryChoresSelected = (category: string, selected: boolean) => {
+    setTasks((current) => current.map((task) => (
+      task.category === category ? { ...task, selected } : task
+    )));
+  };
+
+  const addCategoryTask = () => {
+    if (!addingCategory) return;
+
+    const title = newTask.trim();
+    if (!title) {
+      showAlert("알림", "할 일명을 입력해주세요.");
+      return;
+    }
+
+    const customTask: AppTask = {
+      id: `custom-${Date.now()}`,
+      title: title.slice(0, 30),
+      category: addingCategory,
+      iconKey: iconKeyForCategory(addingCategory),
+      assignee: "none",
+      selected: true,
+      done: false,
+      reacted: false,
+    };
+
+    setTasks((current) => {
+      const base = current.length > 0 ? current : choreSelectionTasks;
+      return [...base, customTask];
+    });
+    setNewTask("");
+    setAddingCategory(null);
   };
 
   const saveWeeklyChoresAndGoHome = async () => {
@@ -695,7 +755,7 @@ export default function Home() {
     if (!context) return;
 
     if (choreSelectionTasks.filter((task) => task.selected).length === 0) {
-      showAlert("선택 필요", "최소 한 개 이상의 할 일을 선택해 주세요.");
+      showAlert("알림", "할 일을 1개 이상 선택해 주세요.");
       return;
     }
 
@@ -727,12 +787,14 @@ export default function Home() {
     if (!userId) return;
 
     if (!inviteCode.trim() && !myCode) {
+      // 왼쪽: 나중에 할게요 → A-06 / 오른쪽: 연결할게요 → A-04 유지
       showConfirm(
-        "코드 없이 진행",
-        "아직 코드를 생성하지 않았어요. 연결을 나중에 할까요?",
-        () => void proceedInviteToChores(),
-        "나중에 할게요",
+        "",
+        "아직 코드를 생성하지 않았어요.\n연결을 나중에 할까요?",
+        () => undefined,
         "연결할게요",
+        "나중에 할게요",
+        () => void proceedInviteToChores(),
       );
       return;
     }
@@ -750,9 +812,10 @@ export default function Home() {
         if (hasPartnerTasks) {
           setScreen("home");
         } else {
+          // 왼쪽: 아니오 → 닫기 / 오른쪽: 네 → A-06
           showConfirm(
-            "파트너 할 일 없음",
-            "파트너가 아직 할 일을 등록하지 않았어요. 내가 먼저 등록해볼까요?",
+            "",
+            "파트너가 아직 할 일을 등록하지 않았어요.\n내가 먼저 등록 해볼까요?",
             () => void proceedInviteToChores(),
             "네",
             "아니오",
@@ -764,19 +827,22 @@ export default function Home() {
         await proceedInviteToChores();
       }
     } catch (error) {
-      showAlert("초대 코드 오류", parseInviteError(error));
+      const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
+      showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleSkipInvite = () => {
+    // 왼쪽: 나중에 할게요 → A-06 / 오른쪽: 연결할게요 → A-04 유지
     showConfirm(
-      "나중에 연결",
-      "파트너와 연결을 나중에 할까요? 파트너와 함께해야 집이 완성돼요. 마이페이지에서 언제든 연결할 수 있어요.",
-      () => void proceedInviteToChores(),
-      "나중에 할게요",
+      "",
+      "파트너 연결을 나중에 할까요?\n파트너와 함께해야 집이 완성돼요 🏠\n마이페이지에서 언제든 연결할 수 있어요.",
+      () => undefined,
       "연결할게요",
+      "나중에 할게요",
+      () => void proceedInviteToChores(),
     );
   };
 
@@ -893,27 +959,36 @@ export default function Home() {
             onEmojiChange={setSelectedEmoji}
             agreedToTerms={agreedToTerms}
             onTermsChange={setAgreedToTerms}
+            onBack={() => setScreen("landing")}
             onNext={handleProfileNext}
           />
         );
       case "social":
+        return (
+          <SocialSignupScreen
+            isLoggingIn={isLoggingIn}
+            onBack={() => setScreen("profile")}
+            onLogin={() => handleSocialLogin("social")}
+          />
+        );
       case "login":
         return (
-          <SocialScreen
-            mode={screen}
+          <LoginScreen
             isLoggingIn={isLoggingIn}
-            onBack={() => setScreen(screen === "social" ? "profile" : "landing")}
-            onLogin={() => handleSocialLogin(screen)}
+            onBack={() => setScreen("landing")}
+            onLogin={() => handleSocialLogin("login")}
           />
         );
       case "invite":
         return (
           <InviteScreen
+            selectedEmoji={selectedEmoji}
             inviteCode={inviteCode}
             myCode={myCode}
             onInviteCodeChange={setInviteCode}
-            onCreateCode={createInviteCodeForUser}
-            onNext={handleInviteNext}
+            onCreateCode={() => void createInviteCodeForUser()}
+            onCopyCode={() => void copyInviteCode()}
+            onNext={() => void handleInviteNext()}
             onSkip={handleSkipInvite}
             isSaving={isSaving}
           />
@@ -924,15 +999,24 @@ export default function Home() {
             tasks={choreSelectionTasks}
             groupedTasks={groupedTasks}
             choreMode={choreMode}
-            newTask={newTask}
-            onNewTaskChange={setNewTask}
+            weekLabel={(() => {
+              const { weekStart, weekEnd } = currentWeekRange();
+              return formatWeekRangeLabel(weekStart, weekEnd);
+            })()}
             onToggle={toggleChoreSelection}
-            onDeselectAll={deselectAllChores}
-            onAssignee={(id, assignee) => {
-              setTasks((current) => current.map((task) => (task.id === id ? { ...task, assignee } : task)));
-              if (isPersistedId(id)) void updateTask(id, { assignee });
+            onToggleAll={() => {
+              const allSelected = choreSelectionTasks.length > 0 && choreSelectionTasks.every((task) => task.selected);
+              setAllChoresSelected(!allSelected);
             }}
-            onAddTask={addTask}
+            onToggleCategory={(category) => {
+              const categoryTasks = choreSelectionTasks.filter((task) => task.category === category);
+              const allSelected = categoryTasks.length > 0 && categoryTasks.every((task) => task.selected);
+              setCategoryChoresSelected(category, !allSelected);
+            }}
+            onStartAdd={(category) => {
+              setAddingCategory(category);
+              setNewTask("");
+            }}
             onDone={saveWeeklyChoresAndGoHome}
             isSaving={isSaving}
           />
@@ -1130,11 +1214,18 @@ export default function Home() {
       </section>
 
       {dialog?.kind === "alert" && (
-        <AlertDialog title={dialog.title} message={dialog.message} onClose={() => setDialog(null)} />
+        <AlertDialog
+          title={dialog.title || "알림"}
+          message={dialog.message}
+          onClose={() => {
+            dialog.onClose?.();
+            setDialog(null);
+          }}
+        />
       )}
       {dialog?.kind === "confirm" && (
         <ConfirmDialog
-          title={dialog.title}
+          title={dialog.title || undefined}
           message={dialog.message}
           confirmLabel={dialog.confirmLabel}
           cancelLabel={dialog.cancelLabel}
@@ -1142,23 +1233,40 @@ export default function Home() {
             dialog.onConfirm();
             setDialog(null);
           }}
-          onCancel={() => setDialog(null)}
+          onCancel={() => {
+            dialog.onCancel?.();
+            setDialog(null);
+          }}
         />
       )}
 
       {showInviteCodeModal && myCode && (
         <ModalOverlay onClose={() => setShowInviteCodeModal(false)}>
-          <h2>내 초대 코드</h2>
-          <p>파트너에게 아래 코드를 공유해 주세요.</p>
+          <h2 className="modal-title">내 초대 코드</h2>
+          <p className="modal-message">파트너에게 아래 코드를 공유해 주세요.</p>
           <div className="invite-code-display">
             <strong>{myCode}</strong>
-            <button className="icon-button copy-button" aria-label="코드 복사" onClick={() => void copyInviteCode()}>
+            <button className="copy-icon-button" aria-label="코드 복사" type="button" onClick={() => void copyInviteCode()}>
               <AssetImage src={commonCopy} alt="" />
             </button>
           </div>
-          <button className="primary-button" onClick={() => setShowInviteCodeModal(false)}>확인</button>
+          <button className="modal-confirm full" type="button" onClick={() => setShowInviteCodeModal(false)}>확인</button>
         </ModalOverlay>
       )}
+
+      {addingCategory && (
+        <AddChoreSheet
+          value={newTask}
+          onChange={setNewTask}
+          onClose={() => {
+            setAddingCategory(null);
+            setNewTask("");
+          }}
+          onSubmit={addCategoryTask}
+        />
+      )}
+
+      {toastMessage && <div className="toast-banner">{toastMessage}</div>}
     </main>
   );
 }
@@ -1186,13 +1294,27 @@ function AuthErrorScreen({ message, onRetry }: { message: string; onRetry: () =>
 
 function StartScreen({ onStart, onLogin }: { onStart: () => void; onLogin: () => void }) {
   return (
-    <div className="center-screen gradient-bg">
-      <LogoMark />
-      <h2>모아성</h2>
-      <p>작은 집안일 하나가 모여 우리의 성이 됩니다</p>
-      <button className="primary-button" onClick={onStart}>새로 시작하기</button>
-      <button className="ghost-button" onClick={onLogin}>기존 계정 로그인</button>
+    <div className="start-screen">
+      <div className="start-brand">
+        <div className="start-logo">
+          <AssetImage src={mainLogo} alt="모아성" />
+        </div>
+        <h1 className="start-title">모아성</h1>
+        <p className="start-subtitle">작은 집안일 하나가 모여 우리의 성이 됩니다</p>
+      </div>
+      <div className="start-actions">
+        <button className="start-primary" onClick={onStart}>새로 시작하기</button>
+        <button className="start-secondary" onClick={onLogin}>기존 계정 로그인</button>
+      </div>
     </div>
+  );
+}
+
+function BackChip({ onClick }: { onClick: () => void }) {
+  return (
+    <button className="back-chip" onClick={onClick} type="button">
+      <span aria-hidden>‹</span> 뒤로
+    </button>
   );
 }
 
@@ -1203,6 +1325,7 @@ function ProfileScreen({
   onEmojiChange,
   agreedToTerms,
   onTermsChange,
+  onBack,
   onNext,
 }: {
   nickname: string;
@@ -1211,102 +1334,214 @@ function ProfileScreen({
   onEmojiChange: (value: string) => void;
   agreedToTerms: boolean;
   onTermsChange: (value: boolean) => void;
+  onBack: () => void;
   onNext: () => void;
 }) {
+  const selectedAvatar = avatarOptions.find((item) => item.id === selectedEmoji) ?? avatarOptions[0];
+
   return (
-    <div className="stack-screen">
-      <div className="onboarding-brand">
-        <LogoMark compact />
-        <h2>모아성</h2>
-        <p>나를 표현할 아바타를 골라주세요</p>
+    <div className="profile-setup-screen">
+      <BackChip onClick={onBack} />
+      <div className="profile-setup-brand">
+        <div className="profile-setup-logo">
+          <AssetImage src={mainLogo} alt="모아성" />
+        </div>
+        <h1>모아성</h1>
+        <p>작은 집안일 하나가 모여 우리의 성이 됩니다</p>
       </div>
-      <label className="field">
-        <span>닉네임</span>
-        <input value={nickname} maxLength={10} onChange={(event) => onNicknameChange(event.target.value)} />
-      </label>
-      <div className="emoji-grid">
-        {avatarOptions.map((avatar) => (
-          <button
-            aria-label={avatar.label}
-            className={avatar.id === selectedEmoji ? "emoji-choice selected" : "emoji-choice"}
-            key={avatar.id}
-            onClick={() => onEmojiChange(avatar.id)}
-          >
-            <AssetImage src={avatar.src} alt="" />
-          </button>
-        ))}
-      </div>
-      <label className="check-row">
+
+      <section className="profile-card-block">
+        <h2>나를 표현할 이모지를 골라요</h2>
+        <div className="emoji-grid">
+          {avatarOptions.map((avatar) => (
+            <button
+              aria-label={avatar.label}
+              aria-pressed={avatar.id === selectedEmoji}
+              className={avatar.id === selectedEmoji ? "emoji-choice selected" : "emoji-choice"}
+              key={avatar.id}
+              type="button"
+              onClick={() => onEmojiChange(avatar.id)}
+            >
+              <AssetImage src={avatar.src} alt="" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="profile-card-block nickname-block">
+        <h2>닉네임을 입력해요</h2>
+        <div className="nickname-field">
+          <span className="nickname-avatar">
+            <AssetImage src={selectedAvatar.src} alt="" />
+          </span>
+          <input
+            value={nickname}
+            maxLength={10}
+            placeholder="예: 곰돌이, 토순이..."
+            onChange={(event) => onNicknameChange(event.target.value)}
+          />
+        </div>
+      </section>
+
+      <label className="terms-check">
         <input type="checkbox" checked={agreedToTerms} onChange={(event) => onTermsChange(event.target.checked)} />
-        이용약관과 개인정보 처리방침에 동의합니다
+        <span>이용약관 및 개인정보처리방침에 동의합니다.(필수)</span>
       </label>
-      <button className="primary-button sticky-bottom" onClick={onNext}>시작하기</button>
+
+      <button className="start-primary profile-start" type="button" onClick={onNext}>시작하기</button>
     </div>
   );
 }
 
-function SocialScreen({
-  mode,
+function SocialSignupScreen({
   isLoggingIn,
   onBack,
   onLogin,
 }: {
-  mode: "social" | "login";
   isLoggingIn: boolean;
   onBack: () => void;
   onLogin: () => void;
 }) {
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header
-        eyebrow={mode === "social" ? "간편 로그인 연동" : "로그인"}
-        title={mode === "social" ? "계정을 연결하면 기록이 안전하게 저장돼요" : "다시 만나서 반가워요"}
-      />
-      <div className="social-card">
-        <button className="kakao-button" disabled={isLoggingIn} onClick={onLogin}><AssetImage src={snsKakao} alt="" />{isLoggingIn ? "연결 중..." : "카카오로 계속하기"}</button>
+    <div className="social-signup-screen">
+      <BackChip onClick={onBack} />
+      <div className="social-signup-body">
+        <div className="social-hero-logo">
+          <AssetImage src={mainLogo} alt="모아성" />
+        </div>
+        <h1>어떤 계정으로 시작할까요?</h1>
+        <p>소셜 계정으로 간편하게 연동해요</p>
+        <button className="kakao-start-button" disabled={isLoggingIn} type="button" onClick={onLogin}>
+          {isLoggingIn ? <span className="button-spinner" aria-hidden /> : <AssetImage src={snsKakao} alt="" />}
+          {isLoggingIn ? "연결 중..." : "카카오로 시작하기"}
+        </button>
       </div>
-      <p className="helper-text">로그인하면 파트너와 함께 만든 기록이 안전하게 저장돼요.</p>
+    </div>
+  );
+}
+
+function LoginScreen({
+  isLoggingIn,
+  onBack,
+  onLogin,
+}: {
+  isLoggingIn: boolean;
+  onBack: () => void;
+  onLogin: () => void;
+}) {
+  return (
+    <div className="login-screen">
+      <BackChip onClick={onBack} />
+      <div className="login-body">
+        <div className="social-hero-logo">
+          <AssetImage src={mainLogo} alt="모아성" />
+        </div>
+        <h1>다시 돌아오셔서 기뻐요!</h1>
+        <p>가입할 때 사용한 계정으로 로그인해요</p>
+        <button className="kakao-start-button" disabled={isLoggingIn} type="button" onClick={onLogin}>
+          {isLoggingIn ? <span className="button-spinner" aria-hidden /> : <AssetImage src={snsKakao} alt="" />}
+          {isLoggingIn ? "연결 중..." : "카카오로 로그인"}
+        </button>
+      </div>
     </div>
   );
 }
 
 function InviteScreen({
+  selectedEmoji,
   inviteCode,
   myCode,
   onInviteCodeChange,
   onCreateCode,
+  onCopyCode,
   onNext,
   onSkip,
   isSaving,
 }: {
+  selectedEmoji: string;
   inviteCode: string;
   myCode: string;
   onInviteCodeChange: (value: string) => void;
   onCreateCode: () => void;
+  onCopyCode: () => void;
   onNext: () => void;
   onSkip: () => void;
   isSaving: boolean;
 }) {
   return (
-    <div className="stack-screen">
-      <div className="partner-hero">
-        <span><AvatarMark value="avatar-pink" /></span>
-        <span><AssetImage src={reactionHeartPink} alt="" /></span>
-        <span><AvatarMark value="avatar-mint" /></span>
+    <div className="invite-screen">
+      <div className="invite-couple">
+        <span className="invite-avatar me"><AvatarMark value={selectedEmoji} /></span>
+        <span className="invite-heart-line">
+          <span className="invite-dash" />
+          <AssetImage src={reactionHeartPink} alt="" />
+          <span className="invite-dash" />
+        </span>
+        <span className="invite-avatar partner dotted">
+          <AssetImage src={avatarQueen} alt="" />
+        </span>
       </div>
-      <Header eyebrow="파트너 초대" title="같이 성을 지을 파트너를 연결해요" />
-      <label className="field">
-        <span>파트너 초대 코드</span>
-        <input placeholder="예: MOA-1234" value={inviteCode} onChange={(event) => onInviteCodeChange(event.target.value)} />
-      </label>
-      <div className="invite-card">
-        <span>내 초대 코드</span>
-        <strong>{myCode || "아직 생성하지 않았어요"}</strong>
-        <button className="secondary-button" disabled={isSaving} onClick={onCreateCode}>{myCode ? "초대 코드 다시 보기" : "내 코드 생성하기"}</button>
+
+      <h1 className="invite-title">파트너와 연결해 볼까요?</h1>
+
+      <section className="invite-section">
+        <div className="invite-section-head">
+          <h2>내가 먼저 시작했어요</h2>
+          <p>초대 코드를 복사해서 파트너에게 공유해요</p>
+        </div>
+        <div className="invite-panel">
+          <span className="invite-label">나의 초대 코드</span>
+          {myCode ? (
+            <div className="my-code-box">
+              <strong>{myCode}</strong>
+              <button className="copy-icon-button" aria-label="코드 복사" type="button" onClick={onCopyCode}>
+                <AssetImage src={commonCopy} alt="" />
+              </button>
+            </div>
+          ) : (
+            <button className="invite-generate" disabled={isSaving} type="button" onClick={onCreateCode}>
+              {isSaving ? "생성 중..." : "초대 코드 생성하기"}
+            </button>
+          )}
+          {myCode ? (
+            <button className="invite-review" disabled={isSaving} type="button" onClick={onCreateCode}>
+              초대 코드 다시 보기
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      <div className="invite-or" aria-hidden>
+        <span />
+        <em>또는</em>
+        <span />
       </div>
-      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onNext}>{isSaving ? "저장 중..." : "다음으로"}</button>
-      <button className="text-button" disabled={isSaving} onClick={onSkip}>나중에 연결할게요</button>
+
+      <section className="invite-section">
+        <div className="invite-section-head">
+          <h2>파트너가 먼저 시작했어요</h2>
+          <p>초대 코드를 입력하면 즉시 파트너와 연결돼요</p>
+        </div>
+        <div className="invite-panel">
+          <label className="invite-label" htmlFor="partner-invite-code">파트너 초대 코드</label>
+          <input
+            id="partner-invite-code"
+            className="partner-code-input"
+            placeholder="초대 코드를 입력하세요"
+            value={inviteCode}
+            onChange={(event) => onInviteCodeChange(event.target.value)}
+          />
+        </div>
+      </section>
+
+      <div className="invite-footer">
+        <button className="start-primary" disabled={isSaving} type="button" onClick={onNext}>
+          {isSaving ? "연결 중..." : "다음으로 →"}
+        </button>
+        <button className="invite-later" disabled={isSaving} type="button" onClick={onSkip}>
+          나중에 연결할게요
+        </button>
+      </div>
     </div>
   );
 }
@@ -1315,74 +1550,159 @@ function ChoreSelectScreen({
   tasks,
   groupedTasks,
   choreMode,
-  newTask,
-  onNewTaskChange,
+  weekLabel,
   onToggle,
-  onDeselectAll,
-  onAssignee,
-  onAddTask,
+  onToggleAll,
+  onToggleCategory,
+  onStartAdd,
   onDone,
   isSaving,
 }: {
   tasks: AppTask[];
   groupedTasks: Record<string, AppTask[]>;
   choreMode: "first" | "repeat";
-  newTask: string;
-  onNewTaskChange: (value: string) => void;
+  weekLabel: string;
   onToggle: (id: string) => void;
-  onDeselectAll: () => void;
-  onAssignee: (id: string, assignee: Assignee) => void;
-  onAddTask: () => void;
+  onToggleAll: () => void;
+  onToggleCategory: (category: string) => void;
+  onStartAdd: (category: string) => void;
   onDone: () => void;
   isSaving: boolean;
 }) {
   const selectedCount = tasks.filter((task) => task.selected).length;
+  const allSelected = tasks.length > 0 && tasks.every((task) => task.selected);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const categories = Object.keys(groupedTasks);
+  const isExpanded = (category: string, index: number) => expanded[category] ?? index === 0;
 
   return (
-    <div className="stack-screen">
-      <Header
-        eyebrow="이번 주"
-        title={choreMode === "repeat" ? "지난주 할 일을 불러왔어요" : "이번 주 할 일을 선택해요"}
-      />
-      <div className="notice-box">
-        {choreMode === "repeat"
-          ? "지난주에 선택한 할 일이 미리 선택돼 있어요. 필요하면 전체 해제 후 다시 고를 수 있어요."
-          : "10가지 카테고리에서 자주 하는 집안일을 골라 이번 주 목록을 만들어 보세요."}
+    <div className="chore-select-screen">
+      <header className="chore-select-header">
+        <h1>이번 주 할 일을 선택해요{weekLabel ? ` (${weekLabel})` : ""}</h1>
+        <p>원하는 카테고리에서 추가할 할 일을 선택해주세요</p>
+      </header>
+
+      {choreMode === "repeat" ? (
+        <div className="chore-guide-box">
+          지난 주 할 일을 미리 골라놨어요 😊 원하지 않는 항목은 해제하고 시작해주세요.
+        </div>
+      ) : null}
+
+      <div className="chore-toolbar">
+        <label className="chore-all-toggle">
+          <input type="checkbox" checked={allSelected} onChange={onToggleAll} />
+          <span>전체 선택/해제</span>
+        </label>
+        <strong>전체 {selectedCount}개 선택됨</strong>
       </div>
-      {choreMode === "repeat" && (
-        <button className="ghost-button deselect-all-button" onClick={onDeselectAll}>전체 해제</button>
-      )}
-      <div className="category-list">
-        {Object.entries(groupedTasks).map(([category, categoryTasks]) => (
-          <section className="category-card" key={category}>
-            <div className="category-head">
-              <strong>{category}</strong>
-              <span>{categoryTasks.filter((task) => task.selected).length}개 선택</span>
-            </div>
-            {categoryTasks.map((task) => (
-              <div className="task-edit-row" key={task.id}>
-                <label>
-                  <input type="checkbox" checked={task.selected} onChange={() => onToggle(task.id)} />
-                  {task.iconKey && taskIconMap[task.iconKey] && (
-                    <span className="task-icon"><AssetImage src={taskIconMap[task.iconKey]} alt="" /></span>
-                  )}
-                  {task.title}
-                </label>
-                <select value={task.assignee} onChange={(event) => onAssignee(task.id, event.target.value as Assignee)}>
-                  <option value="me">나</option>
-                  <option value="partner">파트너</option>
-                  <option value="none">미지정</option>
-                </select>
+
+      <div className="chore-category-list">
+        {categories.map((category, index) => {
+          const categoryTasks = groupedTasks[category] ?? [];
+          const selectedInCategory = categoryTasks.filter((task) => task.selected).length;
+          const open = isExpanded(category, index);
+          const iconKey = categoryTasks[0]?.iconKey ?? iconKeyForCategory(category);
+
+          return (
+            <section className="chore-category-card" key={category}>
+              <div className="chore-category-head">
+                <button
+                  className="chore-category-toggle"
+                  type="button"
+                  onClick={() => setExpanded((current) => ({ ...current, [category]: !open }))}
+                >
+                  <span className="chore-category-title">
+                    {taskIconMap[iconKey] ? (
+                      <span className="task-icon"><AssetImage src={taskIconMap[iconKey]} alt="" /></span>
+                    ) : null}
+                    <strong>{category}</strong>
+                  </span>
+                </button>
+                <span className="chore-category-meta">
+                  <button
+                    className="chore-category-all"
+                    type="button"
+                    onClick={() => onToggleCategory(category)}
+                  >
+                    전체 선택/해제
+                  </button>
+                  <em>{selectedInCategory}</em>
+                  <button
+                    className="chore-chevron-button"
+                    type="button"
+                    aria-label={open ? "접기" : "펼치기"}
+                    onClick={() => setExpanded((current) => ({ ...current, [category]: !open }))}
+                  >
+                    {open ? "▲" : "▼"}
+                  </button>
+                </span>
               </div>
-            ))}
-          </section>
-        ))}
+
+              {open ? (
+                <div className="chore-category-body">
+                  {categoryTasks.map((task) => (
+                    <label className="chore-item" key={task.id}>
+                      <input type="checkbox" checked={task.selected} onChange={() => onToggle(task.id)} />
+                      <span>{task.title}</span>
+                    </label>
+                  ))}
+
+                  <button className="chore-add-button" type="button" onClick={() => onStartAdd(category)}>
+                    + 추가하기
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          );
+        })}
       </div>
-      <div className="add-row">
-        <input placeholder="직접 할 일 추가" value={newTask} onChange={(event) => onNewTaskChange(event.target.value)} />
-        <button onClick={onAddTask}>추가</button>
+
+      <button className="start-primary chore-done" disabled={isSaving} type="button" onClick={onDone}>
+        {isSaving ? "저장 중..." : `선택완료 (${selectedCount}개)`}
+      </button>
+    </div>
+  );
+}
+
+function AddChoreSheet({
+  value,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="bottom-sheet-overlay" role="presentation">
+      <div className="bottom-sheet" role="dialog" aria-modal="true" aria-labelledby="add-chore-title">
+        <div className="bottom-sheet-header">
+          <h2 id="add-chore-title">할 일 추가</h2>
+          <button className="bottom-sheet-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+        </div>
+
+        <label className="bottom-sheet-field">
+          <span>새 이름</span>
+          <div className="bottom-sheet-input-wrap">
+            <input
+              autoFocus
+              value={value}
+              maxLength={30}
+              placeholder="할 일을 입력하세요"
+              onChange={(event) => onChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onSubmit();
+              }}
+            />
+            <em>{value.length}/30</em>
+          </div>
+        </label>
+
+        <button className="start-primary" type="button" onClick={onSubmit}>추가하기</button>
       </div>
-      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onDone}>{isSaving ? "저장 중..." : `선택완료 (${selectedCount}개)`}</button>
     </div>
   );
 }
