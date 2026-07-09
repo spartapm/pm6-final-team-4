@@ -32,27 +32,49 @@ import castleLevel7 from "../../castle_image/성7단계.svg";
 import castleLevel8 from "../../castle_image/성8단계.svg";
 import castleLevel9 from "../../castle_image/성9단계.svg";
 import castleLevel10 from "../../castle_image/성10단계.svg";
-import commonHeartOutline from "../../icons/common-heart-outline.svg";
+import commonAlarm from "../../icons/common-alarm.svg";
+import commonCheckboxFilled from "../../icons/common-checkbox-filled.svg";
+import commonCheckboxOutline from "../../icons/common-checkbox-outline.svg";
+import commonChat from "../../icons/common-chat.svg";
+import commonCopy from "../../icons/common-copy.svg";
+import commonCalendar from "../../icons/common-calendar.svg";
+import commonDelete from "../../icons/common-delete.svg";
+import commonDocument from "../../icons/common-document.svg";
+import commonEdit from "../../icons/common-edit.svg";
+import commonInfo from "../../icons/common-info.svg";
+import commonMailbox from "../../icons/common-mailbox.svg";
 import commonNotification from "../../icons/common-notification.svg";
+import commonRefresh from "../../icons/common-refresh.svg";
+import commonShield from "../../icons/common-shield.svg";
+import commonStatistics from "../../icons/common-statistics.svg";
+import commonTrophy from "../../icons/common-trophy.svg";
 import commonWarning from "../../icons/common-warning.svg";
 import mainLogo from "../../icons/main-logo.svg";
+import taskCooking from "../../icons/task-cooking.svg";
+import taskPlant from "../../icons/task-plant.svg";
 import reactionClap from "../../icons/reaction-clap.svg";
 import reactionClover from "../../icons/reaction-clover.svg";
 import reactionFlower from "../../icons/reaction-flower.svg";
+import reactionHeartGift from "../../icons/reaction-heart-gift.svg";
 import reactionHeartPink from "../../icons/reaction-heart-pink.svg";
+import reactionHeartPurple from "../../icons/reaction-heart-purple.svg";
 import reactionLetter from "../../icons/reaction-letter.svg";
 import reactionLike from "../../icons/reaction-like.svg";
+import reactionParty from "../../icons/reaction-party.svg";
 import reactionSparkle from "../../icons/reaction-sparkle.svg";
 import reactionStar from "../../icons/reaction-star.svg";
+import reactionThanks from "../../icons/reaction-thanks.svg";
+import reactionTeary from "../../icons/reaction-teary.svg";
 import snsKakao from "../../icons/sns-kakao.svg";
 import { AlertDialog, ConfirmDialog, ModalOverlay } from "@/components/modals";
-import { categoryCatalog, formatWeekRangeLabel, iconKeyForCategory, taskIconMap } from "@/lib/chore-catalog";
+import { categoryMeta, catalogTitlesForCategory, formatHomeWeekRange, formatReportWeekRange, formatWeekRangeLabel, iconKeyForCategory, normalizeCategory, taskIconMap } from "@/lib/chore-catalog";
 import {
   addChoreReaction,
   AppChoreTemplate,
   AppLetter,
   AppNotification,
   AppPartnerProfile,
+  AppReaction,
   AppTask,
   AppWeeklyStat,
   closeWeeklyCycle,
@@ -63,8 +85,10 @@ import {
   createNotification,
   currentWeekRange,
   deleteChoreTemplate,
+  deleteWeeklyChore,
   ensureCouple,
   ensureCurrentCycle,
+  ensureCurrentCycleForWeek,
   ensureProfile,
   getActiveInviteCode,
   getCurrentCouple,
@@ -72,13 +96,16 @@ import {
   getProfile,
   getWeeklyLetterStatus,
   insertLetter,
+  insertWeeklyChore,
   isPersistedId,
   loadChoreTemplates,
+  loadCoupleReactions,
   loadLetters,
   loadNotifications,
   loadPreviousCycleChores,
   loadWeeklyStats,
   loadWeeklyChores,
+  markAllNotificationsRead,
   markNotificationRead,
   mergeTemplatesIntoCatalog,
   parseInviteError,
@@ -90,7 +117,6 @@ import {
   updateWeeklyChore,
   upsertWeeklyStats,
 } from "@/lib/moaseong-db";
-import commonCopy from "../../icons/common-copy.svg";
 
 type Screen =
   | "landing"
@@ -106,15 +132,11 @@ type Screen =
   | "weeklyLetter"
   | "stats"
   | "letters"
-  | "letterDetail"
   | "castle"
   | "castleExplain"
   | "mypage"
-  | "profileEdit"
   | "notifications"
   | "templateManage"
-  | "templateEdit"
-  | "templateAdd"
   | "partnerManage"
   | "notificationSettings"
   | "accountSettings";
@@ -132,7 +154,6 @@ type DialogState =
     }
   | null;
 
-type Assignee = "me" | "partner" | "none";
 type AssetModule = string | StaticImageData;
 
 const avatarOptions = [
@@ -166,21 +187,24 @@ const castleLevels = [
   castleLevel10,
 ];
 
+function castleStageFromRate(rate: number) {
+  return Math.min(10, Math.max(1, Math.floor(rate / 10) || 1));
+}
+
 const reactionOptions = [
   { value: "💗", src: reactionHeartPink, label: "하트" },
+  { value: "💜", src: reactionHeartPurple, label: "퍼플하트" },
+  { value: "🎁", src: reactionHeartGift, label: "선물하트" },
   { value: "👍", src: reactionLike, label: "좋아요" },
   { value: "🌸", src: reactionFlower, label: "꽃" },
   { value: "🍀", src: reactionClover, label: "클로버" },
-  { value: "☀️", src: reactionSparkle, label: "반짝" },
+  { value: "✨", src: reactionSparkle, label: "반짝" },
   { value: "👏", src: reactionClap, label: "박수" },
   { value: "⭐", src: reactionStar, label: "별" },
+  { value: "🎉", src: reactionParty, label: "파티" },
+  { value: "🙏", src: reactionThanks, label: "감사" },
+  { value: "🥹", src: reactionTeary, label: "감동" },
 ];
-
-const assigneeLabel: Record<Assignee, string> = {
-  me: "내가 할 일",
-  partner: "파트너가 할 일",
-  none: "미정",
-};
 
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("landing");
@@ -192,8 +216,11 @@ export default function Home() {
   const [tasks, setTasks] = useState<AppTask[]>([]);
   const [newTask, setNewTask] = useState("");
   const [addingCategory, setAddingCategory] = useState<string | null>(null);
+  const [homeAdding, setHomeAdding] = useState(false);
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [showCastleUpgrade, setShowCastleUpgrade] = useState(false);
   const [letterBody, setLetterBody] = useState("");
-  const [reaction, setReaction] = useState("💗");
+  const [reaction, setReaction] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentCoupleId, setCurrentCoupleId] = useState<string | null>(null);
   const [currentCycleId, setCurrentCycleId] = useState<string | null>(null);
@@ -203,13 +230,22 @@ export default function Home() {
   const [authError, setAuthError] = useState<string | null>(null);
   const isHandlingAuthRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([]);
+  const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [templates, setTemplates] = useState<AppChoreTemplate[]>([]);
   const [partnerProfile, setPartnerProfile] = useState<AppPartnerProfile | null>(null);
   const [selectedLetter, setSelectedLetter] = useState<AppLetter | null>(null);
+  const [selectedReaction, setSelectedReaction] = useState<AppReaction | null>(null);
+  const [lastSentLetter, setLastSentLetter] = useState<AppLetter | null>(null);
   const [editingTemplate, setEditingTemplate] = useState<AppChoreTemplate | null>(null);
   const [templateDraft, setTemplateDraft] = useState({ title: "", category: "기타" });
+  const [templateSheet, setTemplateSheet] = useState<
+    | null
+    | { kind: "add"; category: string }
+    | { kind: "edit"; template: AppChoreTemplate }
+    | { kind: "delete"; template: AppChoreTemplate }
+  >(null);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [showInviteCodeModal, setShowInviteCodeModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -219,6 +255,18 @@ export default function Home() {
   const [weekStreak, setWeekStreak] = useState(0);
   const [weeklyLetterStatus, setWeeklyLetterStatus] = useState({ meSent: false, partnerSent: false, bothSent: false });
   const [notificationEnabled, setNotificationEnabled] = useState(true);
+  const [showWeekClosePopup, setShowWeekClosePopup] = useState(false);
+  const [closingWeekRange, setClosingWeekRange] = useState<{ weekStart: string; weekEnd: string } | null>(null);
+  const [closingWeekProgress, setClosingWeekProgress] = useState(0);
+  const [statsEntry, setStatsEntry] = useState<"letter" | "castle">("letter");
+  const [reportTasks, setReportTasks] = useState<AppTask[]>([]);
+  const [reportMeta, setReportMeta] = useState<{
+    progress: number;
+    completeCount: number;
+    totalCount: number;
+    meDone: number;
+    partnerDone: number;
+  } | null>(null);
 
   const showAlert = (title: string, message: string, onClose?: () => void) => setDialog({ kind: "alert", title, message, onClose });
   const showConfirm = (
@@ -239,7 +287,10 @@ export default function Home() {
   });
 
   const completeCount = tasks.filter((task) => task.done).length;
-  const progress = tasks.length > 0 ? Math.round((completeCount / tasks.length) * 100) : 0;
+  const choreRate = tasks.length > 0 ? (completeCount / tasks.length) * 80 : 0;
+  const letterRate = (weeklyLetterStatus.meSent ? 10 : 0) + (weeklyLetterStatus.partnerSent ? 10 : 0);
+  const progress = Math.round(choreRate + letterRate);
+  const castleLevel = Math.min(10, Math.max(1, Math.floor(progress / 10)));
   const meDone = tasks.filter((task) => task.done && task.assignee === "me").length;
   const partnerDone = tasks.filter((task) => task.done && task.assignee === "partner").length;
 
@@ -273,29 +324,91 @@ export default function Home() {
     setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
   };
 
+  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:${userId}:${weekStart}`;
+
+  const evaluateWeekClosePopup = useCallback(async (userId: string, coupleId: string | null, resolvedPartnerId: string | null = partnerId) => {
+    if (!coupleId) {
+      setShowWeekClosePopup(false);
+      return;
+    }
+
+    const previous = currentWeekRange(-1);
+    const current = currentWeekRange();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const previousEnd = new Date(`${previous.weekEnd}T00:00:00`);
+    const weekEnded = today > previousEnd;
+
+    const tryShowForRange = async (range: { weekStart: string; weekEnd: string }) => {
+      const cycleId = await ensureCurrentCycleForWeek(coupleId, range.weekStart, range.weekEnd);
+      const letterStatus = await getWeeklyLetterStatus(cycleId, userId, resolvedPartnerId);
+      if (letterStatus.meSent) {
+        window.localStorage.removeItem(weekCloseStorageKey(userId, range.weekStart));
+        return false;
+      }
+      const weekChores = await loadWeeklyChores(cycleId);
+      const doneCount = weekChores.filter((task) => task.done).length;
+      const choreRate = weekChores.length > 0 ? (doneCount / weekChores.length) * 80 : 0;
+      const letterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
+      setClosingWeekProgress(Math.round(choreRate + letterRate));
+      setClosingWeekRange(range);
+      setShowWeekClosePopup(true);
+      window.localStorage.setItem(weekCloseStorageKey(userId, range.weekStart), "pending");
+      return true;
+    };
+
+    try {
+      // 1) 수동 마감 후 편지 미작성 (현재 주 pending)
+      if (window.localStorage.getItem(weekCloseStorageKey(userId, current.weekStart)) === "pending") {
+        if (await tryShowForRange(current)) return;
+      }
+
+      // 2) 주간 사이클 종료 후 첫 진입 / 재진입
+      if (weekEnded || window.localStorage.getItem(weekCloseStorageKey(userId, previous.weekStart)) === "pending") {
+        if (await tryShowForRange(previous)) return;
+      }
+
+      setShowWeekClosePopup(false);
+    } catch {
+      // 마감 팝업 판별 실패는 홈 진입을 막지 않습니다.
+    }
+  }, [partnerId]);
+
+  useEffect(() => {
+    if (screen === "home" && currentUserId && currentCoupleId) {
+      void evaluateWeekClosePopup(currentUserId, currentCoupleId);
+    }
+  }, [screen, currentUserId, currentCoupleId, evaluateWeekClosePopup]);
+
   const loadCycleData = async (coupleId: string, userId: string) => {
     const cycleId = await ensureCurrentCycle(coupleId);
-    const partner = partnerId ?? (await getCurrentCouple())?.user_a_id === userId
-      ? (await getCurrentCouple())?.user_b_id ?? null
-      : (await getCurrentCouple())?.user_a_id ?? null;
+    const couple = await getCurrentCouple();
+    const partner = couple
+      ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
+      : null;
 
-    const [savedTasks, savedLetters, savedStats, notifs, letterStatus, streak] = await Promise.all([
+    const [savedTasks, savedLetters, savedReactions, savedStats, notifs, letterStatus, streak] = await Promise.all([
       loadWeeklyChores(cycleId),
       loadLetters(userId),
-      loadWeeklyStats(coupleId),
+      loadCoupleReactions(coupleId, userId),
+      loadWeeklyStats(coupleId, partner),
       loadNotifications(userId),
       getWeeklyLetterStatus(cycleId, userId, partner),
       countCompletedWeekStreak(coupleId),
     ]);
 
     setCurrentCycleId(cycleId);
+    setPartnerId(partner);
     setTasks(savedTasks);
     setLetters(savedLetters);
+    setReactions(savedReactions);
     setWeeklyStats(savedStats);
     setNotifications(notifs);
     setWeeklyLetterStatus(letterStatus);
     setWeekStreak(streak);
     if (partner) setPartnerProfile(await getPartnerProfile(partner));
+
+    await evaluateWeekClosePopup(userId, coupleId, partner);
 
     return savedTasks.length;
   };
@@ -390,7 +503,9 @@ export default function Home() {
         syncCoupleState(userId, couple);
         await prepareChoreSelection(couple.id, userId);
         setScreen("login");
-        showAlert("알림", "아직 할 일을 설정하지 않았어요. 지금 설정해볼까요?", () => setScreen("chores"));
+        showAlert("알림", "아직 할 일을 설정하지 않았어요. 지금 설정해볼까요?", () => {
+          void openChoreSelection();
+        });
       }
     } catch (error) {
       console.warn("Supabase data initialization failed after login.", error);
@@ -603,6 +718,91 @@ export default function Home() {
     }
   };
 
+  const completeHomeTask = (id: string) => {
+    void updateTask(id, { done: true, assignee: "me" });
+  };
+
+  const renameHomeTask = async (id: string, title: string) => {
+    const nextTitle = title.trim().slice(0, 30);
+    if (!nextTitle) {
+      showAlert("알림", "할 일명을 입력해주세요.");
+      return false;
+    }
+
+    const previous = tasks.find((task) => task.id === id)?.title;
+    setTasks((current) => current.map((task) => (task.id === id ? { ...task, title: nextTitle } : task)));
+
+    if (!isPersistedId(id)) return true;
+
+    const userId = await ensureSignedInUser();
+    if (!userId) return false;
+
+    try {
+      await updateWeeklyChore(id, userId, { title: nextTitle });
+      return true;
+    } catch {
+      if (previous) {
+        setTasks((current) => current.map((task) => (task.id === id ? { ...task, title: previous } : task)));
+      }
+      showAlert("저장 실패", "할 일 수정에 실패했어요. 다시 시도해 주세요.");
+      return false;
+    }
+  };
+
+  const deleteHomeTask = async (id: string) => {
+    const previous = tasks;
+    setTasks((current) => current.filter((task) => task.id !== id));
+
+    if (!isPersistedId(id)) return;
+
+    try {
+      await deleteWeeklyChore(id);
+    } catch {
+      setTasks(previous);
+      showAlert("삭제 실패", "할 일 삭제에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
+
+  const requestDeleteHomeTask = (id: string) => {
+    showConfirm(
+      "",
+      "할 일을 삭제할까요?",
+      () => void deleteHomeTask(id),
+      "삭제하기",
+      "취소",
+    );
+  };
+
+  const addHomeTask = async (title: string, category: string) => {
+    const nextTitle = title.trim().slice(0, 30);
+    if (!nextTitle) {
+      showAlert("알림", "할 일명을 입력해주세요.");
+      return;
+    }
+
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    try {
+      let cycleId = currentCycleId;
+      if (!cycleId) {
+        const couple = currentCoupleId
+          ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
+          : await ensureCouple(userId);
+        syncCoupleState(userId, couple);
+        cycleId = await ensureCurrentCycle(couple.id);
+        setCurrentCycleId(cycleId);
+      }
+
+      const created = await insertWeeklyChore(cycleId, nextTitle, category);
+      setTasks((current) => [...current, { ...created, iconKey: iconKeyForCategory(category) }]);
+      setHomeAdding(false);
+      setNewTask("");
+    } catch {
+      showAlert("추가 실패", "할 일 추가에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
+
   const openChoreSelection = async () => {
     const userId = await ensureSignedInUser();
     if (!userId) return;
@@ -622,67 +822,199 @@ export default function Home() {
     setScreen("templateManage");
   };
 
-  const handleSaveProfile = async () => {
-    const userId = await ensureSignedInUser();
-    if (!userId) return;
-    if (!nickname.trim()) {
-      showAlert("닉네임 입력", "닉네임을 입력해 주세요.");
+  const handleSaveProfile = async (nextNickname: string, nextEmoji: string) => {
+    const trimmed = nextNickname.trim();
+    if (!trimmed) {
+      showAlert("알림", "닉네임을 입력해주세요.");
       return;
     }
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
     try {
-      await ensureProfile(userId, nickname.trim(), selectedEmoji);
-      setScreen("mypage");
+      await ensureProfile(userId, trimmed, nextEmoji);
+      setNickname(trimmed);
+      setSelectedEmoji(nextEmoji);
+      setShowProfileEdit(false);
     } catch {
       showAlert("저장 실패", "프로필 저장에 실패했어요.");
     }
   };
 
-  const handleNotificationOpen = async (notificationId: string) => {
+  const handleNotificationOpen = async (notification: AppNotification) => {
     try {
-      await markNotificationRead(notificationId);
-      setNotifications((current) => current.map((item) => (
-        item.id === notificationId ? { ...item, read: true } : item
-      )));
+      if (!notification.read) {
+        await markNotificationRead(notification.id);
+        setNotifications((current) => current.map((item) => (
+          item.id === notification.id ? { ...item, read: true } : item
+        )));
+      }
     } catch {
-      // 읽음 처리 실패는 목록 표시를 막지 않습니다.
+      // 읽음 처리 실패는 이동을 막지 않습니다.
     }
-  };
 
-  const handleSaveTemplate = async () => {
-    const userId = await ensureSignedInUser();
-    if (!userId) return;
-    const title = templateDraft.title.trim();
-    if (!title) {
-      showAlert("입력 필요", "할 일 이름을 입력해 주세요.");
+    if (notification.kind === "letter") {
+      const partnerLetter = letters.find((letter) => letter.from === "partner");
+      if (partnerLetter) {
+        setSelectedLetter(partnerLetter);
+        setSelectedReaction(null);
+        return;
+      }
+      setScreen("letters");
       return;
     }
+
+    setScreen("home");
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+    const hasUnread = notifications.some((item) => !item.read);
+    if (!hasUnread) return;
+
     try {
-      if (editingTemplate) {
-        await updateChoreTemplate(editingTemplate.id, title, templateDraft.category);
-        setTemplates(await loadChoreTemplates(userId));
-      } else {
-        const created = await createChoreTemplate(userId, title, templateDraft.category);
-        setTemplates((current) => [...current, created]);
-      }
-      setEditingTemplate(null);
-      setTemplateDraft({ title: "", category: "기타" });
-      setScreen("templateManage");
+      await markAllNotificationsRead(userId);
+      setNotifications((current) => current.map((item) => ({ ...item, read: true })));
     } catch {
-      showAlert("저장 실패", "할 일 저장에 실패했어요.");
+      showAlert("알림", "모두 읽음 처리에 실패했어요. 다시 시도해 주세요.");
     }
   };
 
-  const handleDeleteTemplate = (templateId: string) => {
-    showConfirm("삭제 확인", "이 할 일을 목록에서 삭제할까요?", () => {
-      void (async () => {
-        try {
-          await deleteChoreTemplate(templateId);
-          setTemplates((current) => current.filter((item) => item.id !== templateId));
-        } catch {
-          showAlert("삭제 실패", "삭제에 실패했어요.");
+  const handleApplyTemplateEdit = () => {
+    if (templateSheet?.kind !== "edit") return;
+    const title = templateDraft.title.trim();
+    if (!title) {
+      showAlert("알림", "할 일명을 입력해주세요.");
+      return;
+    }
+    const target = templateSheet.template;
+    const originalTitle = target.title;
+    const category = normalizeCategory(target.category);
+
+    setTemplates((current) => current.map((item) => (
+      item.id === target.id
+        ? { ...item, title, category: templateDraft.category || item.category }
+        : item
+    )));
+    setTasks((current) => current.map((task) => (
+      task.title === originalTitle && normalizeCategory(task.category) === category
+        ? { ...task, title }
+        : task
+    )));
+    setEditingTemplate(null);
+    setTemplateDraft({ title: "", category: "기타" });
+    setTemplateSheet(null);
+  };
+
+  const handleApplyTemplateAdd = () => {
+    if (templateSheet?.kind !== "add") return;
+    const title = templateDraft.title.trim();
+    if (!title) {
+      showAlert("알림", "할 일명을 입력해주세요.");
+      return;
+    }
+
+    const category = normalizeCategory(templateSheet.category);
+    const draftId = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const iconKey = iconKeyForCategory(category);
+    const created: AppChoreTemplate = {
+      id: draftId,
+      title,
+      category,
+      iconKey,
+    };
+
+    setTemplates((current) => [...current, created]);
+    setTasks((current) => [
+      ...current,
+      {
+        id: draftId,
+        title,
+        category,
+        iconKey,
+        assignee: "none",
+        selected: true,
+        done: false,
+        reacted: false,
+      },
+    ]);
+    setEditingTemplate(null);
+    setTemplateDraft({ title: "", category: "기타" });
+    setTemplateSheet(null);
+  };
+
+  const handleDeleteTemplate = (template: AppChoreTemplate) => {
+    void (async () => {
+      try {
+        if (isPersistedId(template.id)) {
+          await deleteChoreTemplate(template.id);
         }
-      })();
-    });
+        const category = normalizeCategory(template.category);
+        setTemplates((current) => current.filter((item) => item.id !== template.id));
+        setTasks((current) => current.filter((task) => !(
+          (task.id === template.id)
+          || (task.title === template.title && normalizeCategory(task.category) === category)
+        )));
+        setTemplateSheet(null);
+        showAlert("알림", "삭제가 완료되었습니다.");
+      } catch {
+        showAlert("삭제 실패", "삭제에 실패했어요.");
+      }
+    })();
+  };
+
+  const handleSaveTemplateManage = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    const context = await ensureCoupleAndCycle();
+    if (!context) {
+      setScreen("mypage");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const savedTemplates: AppChoreTemplate[] = [];
+
+      for (const template of templates) {
+        if (isPersistedId(template.id)) {
+          await updateChoreTemplate(template.id, template.title, template.category);
+          savedTemplates.push(template);
+        } else {
+          const created = await createChoreTemplate(userId, template.title, template.category);
+          savedTemplates.push(created);
+        }
+      }
+
+      setTemplates(savedTemplates);
+
+      const nextTasks: AppTask[] = savedTemplates.map((template, index) => {
+        const source = templates[index];
+        const existing = tasks.find((task) => (
+          task.id === source.id
+          || task.id === template.id
+          || (task.title === template.title && normalizeCategory(task.category) === normalizeCategory(template.category))
+        ));
+        return {
+          id: existing && isPersistedId(existing.id) ? existing.id : template.id,
+          title: template.title,
+          category: template.category,
+          iconKey: template.iconKey ?? iconKeyForCategory(template.category),
+          assignee: existing?.assignee ?? "none",
+          selected: true,
+          done: existing?.done ?? false,
+          reacted: existing?.reacted ?? false,
+        };
+      });
+      const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, nextTasks);
+      setTasks(savedTasks);
+      setScreen("mypage");
+    } catch {
+      showAlert("저장 실패", "이번 주 할 일 저장에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handlePartnerRedeem = async () => {
@@ -847,9 +1179,9 @@ export default function Home() {
   };
 
   const sendLetter = async (weekly = false) => {
-    const body = letterBody.trim();
-    if (!body) {
-      showAlert("편지 작성", "편지 내용을 입력해 주세요.");
+    const meaningfulLength = letterBody.replace(/\s/g, "").length;
+    if (meaningfulLength < 1) {
+      showAlert("알림", weekly ? "편지를 입력해 주세요." : "편지 내용을 입력해 주세요.");
       return;
     }
 
@@ -857,45 +1189,171 @@ export default function Home() {
     if (!userId) return;
 
     try {
+      let targetCycleId = currentCycleId;
+      if (weekly && currentCoupleId && closingWeekRange) {
+        targetCycleId = await ensureCurrentCycleForWeek(
+          currentCoupleId,
+          closingWeekRange.weekStart,
+          closingWeekRange.weekEnd,
+        );
+      }
+
       const savedLetter = await insertLetter({
-        cycleId: currentCycleId,
+        cycleId: targetCycleId,
         senderId: userId,
         receiverId: partnerId,
-        body,
-        reaction,
+        body: letterBody,
+        reaction: reaction || "💌",
         weekly,
       });
 
       setLetters((current) => [savedLetter, ...current]);
+      if (!weekly) setLastSentLetter(savedLetter);
       setLetterBody("");
+      setReaction("");
 
-      if (weekly && currentCycleId && currentCoupleId) {
-        const letterStatus = await getWeeklyLetterStatus(currentCycleId, userId, partnerId);
+      if (weekly && targetCycleId && currentCoupleId) {
+        if (closingWeekRange) {
+          window.localStorage.removeItem(weekCloseStorageKey(userId, closingWeekRange.weekStart));
+        }
+        setShowWeekClosePopup(false);
+
+        const letterStatus = await getWeeklyLetterStatus(targetCycleId, userId, partnerId);
         setWeeklyLetterStatus(letterStatus);
-        const complete = letterStatus.bothSent && progress >= 80;
+        const weekChores = await loadWeeklyChores(targetCycleId);
+        const weekDone = weekChores.filter((task) => task.done).length;
+        const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
+        const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
+        const weekChoreRate = weekChores.length > 0 ? (weekDone / weekChores.length) * 80 : 0;
+        const weekLetterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
+        const weekProgress = Math.round(weekChoreRate + weekLetterRate);
+        const complete = letterStatus.bothSent && weekProgress >= 100;
         setStatsComplete(complete);
         setWeekStreak(await countCompletedWeekStreak(currentCoupleId));
+        setClosingWeekProgress(weekProgress);
+        setReportTasks(weekChores);
+        setReportMeta({
+          progress: weekProgress,
+          completeCount: weekDone,
+          totalCount: weekChores.length,
+          meDone: weekMeDone,
+          partnerDone: weekPartnerDone,
+        });
+        try {
+          await upsertWeeklyStats({
+            cycleId: targetCycleId,
+            completionRate: weekProgress,
+            meCompletedCount: weekMeDone,
+            partnerCompletedCount: weekPartnerDone,
+            sentLetterCount: (letterStatus.meSent ? 1 : 0) + (letterStatus.partnerSent ? 1 : 0),
+          });
+          setWeeklyStats(await loadWeeklyStats(currentCoupleId, partnerId));
+        } catch {
+          // 통계 저장 실패가 결과 화면 진입을 막지 않게 둡니다.
+        }
+        setStatsEntry("letter");
         setScreen("stats");
         return;
       }
 
       setScreen(weekly ? "stats" : "sent");
-    } catch {
-      showAlert("전송 실패", "편지 전송에 실패했어요. 다시 시도해 주세요.");
+    } catch (error) {
+      const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
+      if (!weekly) {
+        showToast("전송에 실패했어요. 다시 시도해 주세요.");
+        return;
+      }
+      showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : "편지 전송에 실패했어요. 다시 시도해 주세요.");
     }
   };
 
+  const requestSendInstantLetter = () => {
+    const meaningfulLength = letterBody.replace(/\s/g, "").length;
+    if (meaningfulLength < 1) {
+      showAlert("알림", "편지 내용을 입력해 주세요.");
+      return;
+    }
+
+    showConfirm(
+      "",
+      "전송 후 수정 및 삭제가 불가능합니다.\n보내시겠습니까?",
+      () => void sendLetter(false),
+      "확인",
+      "취소",
+    );
+  };
+
+  const requestSendWeeklyLetter = () => {
+    const meaningfulLength = letterBody.replace(/\s/g, "").length;
+    if (meaningfulLength < 1) {
+      showAlert("알림", "편지를 입력해 주세요.");
+      return;
+    }
+
+    showConfirm(
+      "",
+      "전송 후 수정 및 삭제가 불가능합니다.\n보내시겠습니까?",
+      () => void sendLetter(true),
+      "네",
+      "아니오",
+    );
+  };
+
+  const openWeeklyLetterFromClosePopup = () => {
+    if (!navigator.onLine) {
+      showAlert("알림", "인터넷 연결을 확인해 주세요.");
+      return;
+    }
+    setShowWeekClosePopup(false);
+    setScreen("weeklyLetter");
+  };
+
   const handleReact = async (id: string, reactionValue = "💗") => {
-    await updateTask(id, { reacted: true });
+    const task = tasks.find((item) => item.id === id);
+    if (!task || task.reacted) return;
+
+    setTasks((current) => current.map((item) => (item.id === id ? { ...item, reacted: true } : item)));
 
     const userId = await ensureSignedInUser();
     if (!userId || !isPersistedId(id)) return;
 
     try {
       await addChoreReaction(id, userId, reactionValue);
+      setReactions((current) => [
+        {
+          id: `local-${Date.now()}`,
+          from: "me",
+          reaction: reactionValue,
+          choreTitle: task.title,
+          createdAt: new Date().toISOString(),
+          date: new Date().toLocaleDateString("ko-KR"),
+        },
+        ...current,
+      ]);
+      if (partnerId && notificationEnabled) {
+        await createNotification({
+          userId: partnerId,
+          choreId: id,
+          title: "리액션 알림",
+          body: `${nickname || "파트너"}님이 '${task.title}'에 리액션을 보냈어요.`,
+        });
+      }
     } catch {
-      showAlert("리액션 실패", "리액션 저장에 실패했어요. 다시 시도해 주세요.");
+      setTasks((current) => current.map((item) => (item.id === id ? { ...item, reacted: false } : item)));
+      showToast("전송에 실패했어요. 다시 시도해 주세요.");
     }
+  };
+
+  const requestReact = (id: string, title: string, reactionValue: string, reactionLabel: string) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || task.reacted) return;
+    showConfirm(
+      "",
+      `'${title}'에 ${reactionLabel}를 보내시겠습니까?`,
+      () => void handleReact(id, reactionValue),
+      "네",
+      "아니오",
+    );
   };
 
   const closeWeek = async () => {
@@ -912,20 +1370,29 @@ export default function Home() {
         partnerCompletedCount: partnerDone,
         sentLetterCount: letters.length,
       });
-      if (currentCoupleId) setWeeklyStats(await loadWeeklyStats(currentCoupleId));
+      if (currentCoupleId) setWeeklyStats(await loadWeeklyStats(currentCoupleId, partnerId));
     } catch {
       // 통계 저장 실패가 주간 마감 흐름 자체를 막지는 않게 둡니다.
     }
 
-    setScreen("weeklyLetter");
+    const range = currentWeekRange();
+    setClosingWeekRange(range);
+    setClosingWeekProgress(progress);
+    if (currentUserId) {
+      window.localStorage.setItem(weekCloseStorageKey(currentUserId, range.weekStart), "pending");
+    }
+    setShowWeekClosePopup(true);
+    setScreen("home");
   };
 
   const finishWeekAndStartNext = async () => {
-    if (!currentCoupleId || !currentCycleId) return;
+    if (!currentCoupleId) return;
     setIsSaving(true);
     try {
-      await closeWeeklyCycle(currentCycleId);
-      const { cycleId, tasks: nextTasks } = await startNextWeekCycle(currentCoupleId, tasks);
+      const range = closingWeekRange ?? currentWeekRange(-1);
+      const closingCycleId = await ensureCurrentCycleForWeek(currentCoupleId, range.weekStart, range.weekEnd);
+      await closeWeeklyCycle(closingCycleId);
+      const { cycleId, tasks: nextTasks } = await startNextWeekCycle(currentCoupleId, reportTasks.length ? reportTasks : tasks);
       setCurrentCycleId(cycleId);
       setTasks(nextTasks);
       setChoreMode("repeat");
@@ -937,8 +1404,60 @@ export default function Home() {
     }
   };
 
-  const choreContribution = Math.round((progress / 100) * 80);
-  const letterContribution = weeklyLetterStatus.bothSent ? 10 : weeklyLetterStatus.meSent || weeklyLetterStatus.partnerSent ? 5 : 0;
+  const openWeeklyReportFromCastle = (stat: AppWeeklyStat) => {
+    void (async () => {
+      if (!currentCoupleId || !currentUserId) return;
+
+      const meCount = stat.meCompletedCount;
+      const partnerCount = stat.partnerCompletedCount;
+      const totalDone = meCount + partnerCount;
+
+      setClosingWeekRange({ weekStart: stat.weekStart, weekEnd: stat.weekEnd });
+      setStatsComplete(stat.completionRate >= 100);
+      setStatsEntry("castle");
+      setClosingWeekProgress(stat.completionRate);
+      setReportMeta({
+        progress: stat.completionRate,
+        completeCount: totalDone,
+        totalCount: Math.max(totalDone, 1),
+        meDone: meCount,
+        partnerDone: partnerCount,
+      });
+      setReportTasks([]);
+      setScreen("stats");
+
+      try {
+        const cycleId = await ensureCurrentCycleForWeek(currentCoupleId, stat.weekStart, stat.weekEnd);
+        const [weekChores, letterStatus, weekLetters] = await Promise.all([
+          loadWeeklyChores(cycleId),
+          getWeeklyLetterStatus(cycleId, currentUserId, partnerId),
+          loadLetters(currentUserId),
+        ]);
+        const weekDone = weekChores.filter((task) => task.done).length;
+        const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
+        const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
+        const weekChoreRate = weekChores.length > 0 ? (weekDone / weekChores.length) * 80 : 0;
+        const weekLetterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
+        const weekProgress = Math.round(weekChoreRate + weekLetterRate);
+
+        setWeeklyLetterStatus(letterStatus);
+        setLetters(weekLetters);
+        setReportTasks(weekChores);
+        setClosingWeekProgress(weekProgress);
+        setStatsComplete(letterStatus.bothSent && weekProgress >= 100);
+        setReportMeta({
+          progress: weekProgress || stat.completionRate,
+          completeCount: weekDone || totalDone,
+          totalCount: weekChores.length || Math.max(totalDone, 1),
+          meDone: weekMeDone || meCount,
+          partnerDone: weekPartnerDone || partnerCount,
+        });
+      } catch {
+        // 상세 로드 실패 시 통계 카드 수치만으로 표시합니다.
+      }
+    })();
+  };
+
   const unreadCount = notifications.filter((item) => !item.read).length;
 
   const renderScreen = () => {
@@ -1022,59 +1541,121 @@ export default function Home() {
           />
         );
       case "letter":
-      case "weeklyLetter":
         return (
           <LetterWriteScreen
-            weekly={screen === "weeklyLetter"}
             body={letterBody}
             reaction={reaction}
-            progress={progress}
+            partnerProfile={partnerProfile}
             onBodyChange={setLetterBody}
             onReactionChange={setReaction}
             onBack={goHome}
-            onSend={() => sendLetter(screen === "weeklyLetter")}
+            onEmpty={() => showAlert("알림", "편지 내용을 입력해 주세요.")}
+            onSend={requestSendInstantLetter}
+          />
+        );
+      case "weeklyLetter":
+        return (
+          <WeeklyLetterScreen
+            body={letterBody}
+            reaction={reaction}
+            progress={closingWeekProgress || progress}
+            weekStart={closingWeekRange?.weekStart ?? currentWeekRange(-1).weekStart}
+            weekEnd={closingWeekRange?.weekEnd ?? currentWeekRange(-1).weekEnd}
+            partnerProfile={partnerProfile}
+            onBodyChange={setLetterBody}
+            onReactionChange={setReaction}
+            onEmpty={() => showAlert("알림", "편지를 입력해 주세요.")}
+            onSend={requestSendWeeklyLetter}
           />
         );
       case "sent":
-        return <SentScreen onHome={goHome} />;
+        return (
+          <SentScreen
+            partnerProfile={partnerProfile}
+            letter={lastSentLetter}
+            onHome={goHome}
+            onWriteAgain={() => {
+              setLetterBody("");
+              setReaction("");
+              setScreen("letter");
+            }}
+          />
+        );
       case "close":
-        return <CloseWeekScreen onCancel={goHome} onNext={closeWeek} />;
-      case "stats":
+        return (
+          <CloseWeekScreen
+            onCancel={goHome}
+            onNext={() => {
+              void closeWeek();
+            }}
+          />
+        );
+      case "stats": {
+        const reportProgress = reportMeta?.progress ?? progress;
+        const reportCompleteCount = reportMeta?.completeCount ?? completeCount;
+        const reportTotalCount = reportMeta?.totalCount ?? tasks.length;
+        const reportMeDone = reportMeta?.meDone ?? meDone;
+        const reportPartnerDone = reportMeta?.partnerDone ?? partnerDone;
+        const reportWeek = closingWeekRange ?? currentWeekRange(-1);
+        const weeklyLetters = letters.filter((letter) => (
+          letter.kind === "weekly"
+          || letter.title.includes("주간")
+        ));
         return (
           <StatsScreen
-            progress={progress}
-            completeCount={completeCount}
-            totalCount={tasks.length}
-            meDone={meDone}
-            partnerDone={partnerDone}
-            choreContribution={choreContribution}
-            letterContribution={letterContribution}
-            complete={statsComplete}
+            progress={reportProgress}
+            completeCount={reportCompleteCount}
+            totalCount={reportTotalCount}
+            meDone={reportMeDone}
+            partnerDone={reportPartnerDone}
+            tasks={reportTasks}
+            weekStart={reportWeek.weekStart}
+            weekEnd={reportWeek.weekEnd}
+            complete={statsComplete || reportProgress >= 100}
             weekStreak={weekStreak}
-            weeklyLetterStatus={weeklyLetterStatus}
-            onNext={() => void finishWeekAndStartNext()}
+            myLetter={weeklyLetters.find((letter) => letter.from === "me") ?? null}
+            partnerLetter={weeklyLetters.find((letter) => letter.from === "partner") ?? null}
+            selectedEmoji={selectedEmoji}
+            partnerProfile={partnerProfile}
+            entry={statsEntry}
+            onBack={() => {
+              if (statsEntry === "castle") {
+                setScreen("castle");
+                return;
+              }
+              void finishWeekAndStartNext();
+            }}
+            onNextWeek={() => void finishWeekAndStartNext()}
+            onSelectLetter={(letter) => {
+              setSelectedLetter(letter);
+              setSelectedReaction(null);
+            }}
             isSaving={isSaving}
           />
         );
+      }
       case "letters":
         return (
           <LettersScreen
             letters={letters}
-            onSelect={(letter) => {
+            reactions={reactions}
+            partnerProfile={partnerProfile}
+            nickname={nickname}
+            onSelectLetter={(letter) => {
               setSelectedLetter(letter);
-              setScreen("letterDetail");
+              setSelectedReaction(null);
+            }}
+            onSelectReaction={(reaction) => {
+              setSelectedReaction(reaction);
+              setSelectedLetter(null);
             }}
           />
         );
-      case "letterDetail":
-        return selectedLetter ? (
-          <LetterDetailScreen letter={selectedLetter} onBack={() => setScreen("letters")} />
-        ) : null;
       case "castle":
         return (
           <CastleHistoryScreen
             stats={weeklyStats}
-            onExplain={() => setScreen("castleExplain")}
+            onSelectWeek={openWeeklyReportFromCastle}
           />
         );
       case "castleExplain":
@@ -1084,24 +1665,21 @@ export default function Home() {
           <MyPageScreen
             nickname={nickname}
             selectedEmoji={selectedEmoji}
-            myCode={myCode}
             partnerProfile={partnerProfile}
-            onEdit={() => setScreen("profileEdit")}
+            notificationEnabled={notificationEnabled}
+            onEdit={() => setShowProfileEdit(true)}
             onManageTasks={() => void openTemplateManage()}
-            onPartnerManage={() => setScreen("partnerManage")}
-            onNotificationSettings={() => setScreen("notificationSettings")}
-            onAccountSettings={() => setScreen("accountSettings")}
-          />
-        );
-      case "profileEdit":
-        return (
-          <ProfileEditScreen
-            nickname={nickname}
-            selectedEmoji={selectedEmoji}
-            onNicknameChange={setNickname}
-            onEmojiChange={setSelectedEmoji}
-            onSave={() => void handleSaveProfile()}
-            onBack={() => setScreen("mypage")}
+            onConnectPartner={() => setScreen("invite")}
+            onLogout={async () => {
+              await supabase.auth.signOut();
+              setScreen("landing");
+              setTasks([]);
+              setLetters([]);
+              setReactions([]);
+              setCurrentUserId(null);
+            }}
+            showConfirm={showConfirm}
+            showAlert={showAlert}
           />
         );
       case "notifications":
@@ -1109,37 +1687,29 @@ export default function Home() {
           <NotificationsScreen
             notifications={notifications}
             onBack={goHome}
-            onOpen={(id) => void handleNotificationOpen(id)}
+            onMarkAll={() => void handleMarkAllNotificationsRead()}
+            onOpen={(item) => void handleNotificationOpen(item)}
           />
         );
       case "templateManage":
         return (
           <TemplateManageScreen
             templates={templates}
+            weekCategories={new Set(tasks.map((task) => normalizeCategory(task.category)))}
+            isSaving={isSaving}
             onBack={() => setScreen("mypage")}
-            onAdd={() => {
+            onAdd={(category) => {
               setEditingTemplate(null);
-              setTemplateDraft({ title: "", category: "기타" });
-              setScreen("templateAdd");
+              setTemplateDraft({ title: "", category });
+              setTemplateSheet({ kind: "add", category });
             }}
             onEdit={(template) => {
               setEditingTemplate(template);
               setTemplateDraft({ title: template.title, category: template.category });
-              setScreen("templateEdit");
+              setTemplateSheet({ kind: "edit", template });
             }}
-            onDelete={handleDeleteTemplate}
-          />
-        );
-      case "templateEdit":
-      case "templateAdd":
-        return (
-          <TemplateEditScreen
-            draft={templateDraft}
-            categories={categoryCatalog.map((item) => item.category)}
-            isEditing={screen === "templateEdit"}
-            onDraftChange={setTemplateDraft}
-            onSave={() => void handleSaveTemplate()}
-            onBack={() => setScreen("templateManage")}
+            onDelete={(template) => setTemplateSheet({ kind: "delete", template })}
+            onSave={() => void handleSaveTemplateManage()}
           />
         );
       case "partnerManage":
@@ -1178,28 +1748,37 @@ export default function Home() {
           />
         );
       case "home":
-      default:
+      default: {
+        const homeWeek = currentWeekRange();
         return (
           <HomeScreen
-            nickname={nickname}
-            selectedEmoji={selectedEmoji}
             tasks={tasks}
             progress={progress}
+            castleLevel={castleLevel}
             completeCount={completeCount}
             unreadCount={unreadCount}
-            onToggle={(id) => updateTask(id, { done: !tasks.find((task) => task.id === id)?.done })}
-            onReact={handleReact}
+            weekStart={homeWeek.weekStart}
+            weekEnd={homeWeek.weekEnd}
+            partnerProfile={partnerProfile}
+            onComplete={completeHomeTask}
+            onReact={requestReact}
             onWriteLetter={() => setScreen("letter")}
-            onAddTask={() => void openChoreSelection()}
-            onCloseWeek={() => setScreen("close")}
+            onRename={(id, title) => renameHomeTask(id, title)}
+            onDelete={requestDeleteHomeTask}
+            onAdd={() => {
+              setNewTask("");
+              setHomeAdding(true);
+            }}
             onNotifications={() => setScreen("notifications")}
-            onCastleExplain={() => setScreen("castleExplain")}
+            onCastleExplain={() => setShowCastleUpgrade(true)}
           />
         );
+      }
     }
   };
 
-  const showNav = ["home", "letters", "castle", "mypage"].includes(screen);
+  const showNav = ["home", "letters", "castle", "mypage", "notifications"].includes(screen)
+    || (screen === "stats" && statsEntry === "castle");
 
   return (
     <main className="app-shell">
@@ -1210,7 +1789,18 @@ export default function Home() {
             setScreen("login");
           }} /> : renderScreen()}
         </div>
-        {showNav && <BottomNav current={screen} onChange={setScreen} />}
+        {showNav && (
+          <BottomNav
+            current={
+              screen === "stats" && statsEntry === "castle"
+                ? "castle"
+                : screen === "notifications"
+                  ? "home"
+                  : screen
+            }
+            onChange={setScreen}
+          />
+        )}
       </section>
 
       {dialog?.kind === "alert" && (
@@ -1263,6 +1853,107 @@ export default function Home() {
             setNewTask("");
           }}
           onSubmit={addCategoryTask}
+        />
+      )}
+
+      {showProfileEdit && (
+        <ProfileEditSheet
+          nickname={nickname}
+          selectedEmoji={selectedEmoji}
+          onClose={() => setShowProfileEdit(false)}
+          onSave={(nextNickname, nextEmoji) => void handleSaveProfile(nextNickname, nextEmoji)}
+        />
+      )}
+
+      {templateSheet?.kind === "add" && (
+        <TemplateAddSheet
+          value={templateDraft.title}
+          onChange={(title) => setTemplateDraft((current) => ({ ...current, title }))}
+          onClose={() => {
+            setEditingTemplate(null);
+            setTemplateSheet(null);
+          }}
+          onSubmit={handleApplyTemplateAdd}
+        />
+      )}
+
+      {templateSheet?.kind === "edit" && (
+        <TemplateEditSheet
+          originalTitle={templateSheet.template.title}
+          value={templateDraft.title}
+          onChange={(title) => setTemplateDraft((current) => ({ ...current, title }))}
+          onClose={() => {
+            setEditingTemplate(null);
+            setTemplateSheet(null);
+          }}
+          onSubmit={handleApplyTemplateEdit}
+        />
+      )}
+
+      {templateSheet?.kind === "delete" && (
+        <TemplateDeleteSheet
+          title={templateSheet.template.title}
+          category={templateSheet.template.category}
+          onClose={() => setTemplateSheet(null)}
+          onConfirm={() => handleDeleteTemplate(templateSheet.template)}
+        />
+      )}
+
+      {homeAdding && (
+        <HomeAddChoreSheet
+          existingTitles={tasks.map((task) => task.title)}
+          onClose={() => {
+            setHomeAdding(false);
+            setNewTask("");
+          }}
+          onSave={(title, category) => void addHomeTask(title, category)}
+        />
+      )}
+
+      {showWeekClosePopup && screen === "home" && (
+        <WeekClosePopup
+          weekStart={closingWeekRange?.weekStart ?? currentWeekRange(-1).weekStart}
+          weekEnd={closingWeekRange?.weekEnd ?? currentWeekRange(-1).weekEnd}
+          progress={closingWeekProgress || progress}
+          onWriteLetter={openWeeklyLetterFromClosePopup}
+        />
+      )}
+
+      {showCastleUpgrade && (
+        <CastleUpgradeModal onClose={() => setShowCastleUpgrade(false)} />
+      )}
+
+      {selectedLetter && (
+        <LetterDetailModal
+          letter={selectedLetter}
+          senderEmoji={
+            selectedLetter.from === "me"
+              ? selectedEmoji
+              : (partnerProfile?.avatarEmoji ?? "avatar-mint")
+          }
+          senderName={
+            selectedLetter.from === "me"
+              ? (nickname.trim() || "나")
+              : (partnerProfile?.nickname?.trim() || "파트너")
+          }
+          onClose={() => setSelectedLetter(null)}
+        />
+      )}
+
+      {selectedReaction && (
+        <ReactionDetailModal
+          reaction={selectedReaction}
+          senderEmoji={
+            selectedReaction.from === "me"
+              ? selectedEmoji
+              : (partnerProfile?.avatarEmoji ?? "avatar-mint")
+          }
+          senderName={
+            selectedReaction.from === "me"
+              ? (nickname.trim() || "나")
+              : (partnerProfile?.nickname?.trim() || "파트너")
+          }
+          onClose={() => setSelectedReaction(null)}
         />
       )}
 
@@ -1707,114 +2398,398 @@ function AddChoreSheet({
   );
 }
 
-function HomeScreen({
-  nickname,
-  selectedEmoji,
-  tasks,
-  progress,
-  completeCount,
-  unreadCount,
-  onToggle,
-  onReact,
-  onWriteLetter,
-  onAddTask,
-  onCloseWeek,
-  onNotifications,
-  onCastleExplain,
+function HomeAddChoreSheet({
+  existingTitles,
+  onClose,
+  onSave,
 }: {
-  nickname: string;
-  selectedEmoji: string;
-  tasks: AppTask[];
-  progress: number;
-  completeCount: number;
-  unreadCount: number;
-  onToggle: (id: string) => void;
-  onReact: (id: string) => void;
-  onWriteLetter: () => void;
-  onAddTask: () => void;
-  onCloseWeek: () => void;
-  onNotifications: () => void;
-  onCastleExplain: () => void;
+  existingTitles: string[];
+  onClose: () => void;
+  onSave: (title: string, category: string) => void;
 }) {
+  const [category, setCategory] = useState(categoryMeta[0].category);
+  const [title, setTitle] = useState("");
+  const [manualMode, setManualMode] = useState(false);
+  const [selectOpen, setSelectOpen] = useState(false);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+
+  const iconKey = iconKeyForCategory(category);
+  const existingSet = new Set(existingTitles);
+  const options = catalogTitlesForCategory(category).filter((item) => !existingSet.has(item));
+  const canSave = title.trim().length > 0;
+
+  const selectCategory = (next: string) => {
+    setCategory(next);
+    setTitle("");
+    setManualMode(false);
+    setSelectedOption(null);
+    setSelectOpen(false);
+  };
+
+  const pickOption = (option: string) => {
+    if (option === "__manual__") {
+      setManualMode(true);
+      setSelectedOption("직접 입력하기");
+      setTitle("");
+    } else {
+      setManualMode(false);
+      setSelectedOption(option);
+      setTitle(option);
+    }
+    setSelectOpen(false);
+  };
+
   return (
-    <div className="stack-screen">
-      <div className="home-head">
-        <div>
-          <span className="eyebrow">우리의 이번 주</span>
-          <h2>{nickname}성 공사 중</h2>
+    <div className="bottom-sheet-overlay" role="presentation">
+      <div
+        className="bottom-sheet home-add-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="home-add-chore-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="bottom-sheet-header">
+          <h2 id="home-add-chore-title">할 일 추가하기</h2>
+          <button className="bottom-sheet-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
         </div>
-        <button className="round-button notification-button" aria-label="알림" onClick={onNotifications}>
-          <AssetImage src={commonNotification} alt="" />
-          {unreadCount > 0 && <span className="badge">{unreadCount}</span>}
+
+        <div className="home-add-block">
+          <span className="home-add-label">카테고리</span>
+          <div className="home-add-category-grid">
+            {categoryMeta.map((item) => (
+              <button
+                className={category === item.category ? "selected" : ""}
+                key={item.category}
+                type="button"
+                onClick={() => selectCategory(item.category)}
+              >
+                <AssetImage src={taskIconMap[item.iconKey]} alt="" />
+                <em>{item.category}</em>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="home-add-block">
+          <span className="home-add-label">할 일 이름</span>
+          <div className="home-add-select-wrap">
+            <button
+              className="home-add-select"
+              type="button"
+              onClick={() => setSelectOpen((open) => !open)}
+            >
+              <AssetImage src={taskIconMap[iconKey]} alt="" />
+              <span className={selectedOption ? "" : "placeholder"}>
+                {selectedOption ?? "옵션을 선택해 주세요"}
+              </span>
+              <em>▼</em>
+            </button>
+            {selectOpen && (
+              <div className="home-add-dropdown">
+                {options.map((option) => (
+                  <button key={option} type="button" onClick={() => pickOption(option)}>
+                    {option}
+                  </button>
+                ))}
+                <button type="button" onClick={() => pickOption("__manual__")}>직접 입력하기</button>
+              </div>
+            )}
+          </div>
+
+          <div className={`home-add-input-row${manualMode || title ? " active" : ""}`}>
+            <AssetImage src={taskIconMap[iconKey]} alt="" />
+            <input
+              maxLength={30}
+              placeholder={manualMode ? "할 일 이름을 입력하세요" : ""}
+              readOnly={!manualMode}
+              value={title}
+              onChange={(event) => {
+                if (!manualMode) return;
+                setTitle(event.target.value.slice(0, 30));
+              }}
+            />
+            {manualMode && <em>{title.length}/30</em>}
+          </div>
+        </div>
+
+        <button
+          className={canSave ? "home-add-save active" : "home-add-save"}
+          disabled={!canSave}
+          type="button"
+          onClick={() => {
+            if (!canSave) return;
+            onSave(title, category);
+          }}
+        >
+          {canSave ? "저장하기" : "할 일 이름을 입력해주세요"}
         </button>
       </div>
-      <CastleCard progress={progress} completeCount={completeCount} total={tasks.length} onExplain={onCastleExplain} />
-      <TaskSection
-        title="완료한 일"
-        tasks={tasks.filter((task) => task.done)}
-        empty="아직 완료한 일이 없어요"
-        onToggle={onToggle}
-        onReact={onReact}
-        onWriteLetter={onWriteLetter}
-      />
-      <TaskSection
-        title="미완료한 일"
-        tasks={tasks.filter((task) => !task.done)}
-        empty="이번 주 할 일을 모두 끝냈어요"
-        onToggle={onToggle}
-        onReact={onReact}
-        onWriteLetter={onWriteLetter}
-      />
-      <div className="home-actions">
-        <button className="secondary-button" onClick={onAddTask}>할 일 수정</button>
-        <button className="primary-button" onClick={onCloseWeek}>이번 주 마무리</button>
-      </div>
-      <div className="partner-strip">{selectedEmoji} 파트너에게 완료 알림과 인정 요청을 보낼 수 있어요.</div>
     </div>
   );
 }
 
-function TaskSection({
-  title,
+function HomeScreen({
   tasks,
-  empty,
-  onToggle,
+  progress,
+  castleLevel,
+  completeCount,
+  unreadCount,
+  weekStart,
+  weekEnd,
+  partnerProfile,
+  onComplete,
   onReact,
   onWriteLetter,
+  onRename,
+  onDelete,
+  onAdd,
+  onNotifications,
+  onCastleExplain,
 }: {
-  title: string;
   tasks: AppTask[];
-  empty: string;
-  onToggle: (id: string) => void;
-  onReact: (id: string) => void;
+  progress: number;
+  castleLevel: number;
+  completeCount: number;
+  unreadCount: number;
+  weekStart: string;
+  weekEnd: string;
+  partnerProfile: AppPartnerProfile | null;
+  onComplete: (id: string) => void;
+  onReact: (id: string, title: string, reactionValue: string, reactionLabel: string) => void;
   onWriteLetter: () => void;
+  onRename: (id: string, title: string) => Promise<boolean>;
+  onDelete: (id: string) => void;
+  onAdd: () => void;
+  onNotifications: () => void;
+  onCastleExplain: () => void;
 }) {
+  const [doneTab, setDoneTab] = useState<"me" | "partner">("partner");
+  const [editMode, setEditMode] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+
+  const level = Math.min(10, Math.max(1, castleLevel || 1));
+  const levelIndex = level - 1;
+  const doneMine = tasks.filter((task) => task.done && task.assignee === "me");
+  const donePartner = tasks.filter((task) => task.done && task.assignee === "partner");
+  const incomplete = tasks.filter((task) => !task.done);
+  const visibleDone = doneTab === "me" ? doneMine : donePartner;
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+
+  const incompleteGroups = incomplete.reduce<Record<string, AppTask[]>>((acc, task) => {
+    acc[task.category] = [...(acc[task.category] ?? []), task];
+    return acc;
+  }, {});
+
+  const reactionButtons = [
+    { value: "💗", src: reactionHeartPink, label: "💗" },
+    { value: "👍", src: reactionLike, label: "👍" },
+    { value: "⭐", src: reactionStar, label: "⭐" },
+  ];
+
+  const startEditTask = (task: AppTask) => {
+    setEditingTaskId(task.id);
+    setEditingTitle(task.title);
+  };
+
+  const saveEditTask = async () => {
+    if (!editingTaskId) return;
+    const ok = await onRename(editingTaskId, editingTitle);
+    if (ok) {
+      setEditingTaskId(null);
+      setEditingTitle("");
+    }
+  };
+
+  const exitEditMode = () => {
+    setEditMode(false);
+    setEditingTaskId(null);
+    setEditingTitle("");
+  };
+
   return (
-    <section className="task-section">
-      <h3>{title} <span>{tasks.length}</span></h3>
-      {tasks.length === 0 ? <p className="empty">{empty}</p> : tasks.map((task) => (
-        <div className={task.done ? "task-row done" : "task-row"} key={task.id}>
-          <label>
-            <input type="checkbox" checked={task.done} onChange={() => onToggle(task.id)} />
-            <span>{task.title}</span>
-          </label>
-          <small>{assigneeLabel[task.assignee]}</small>
-          {task.done && (
-            <div className="reaction-row">
-              <button aria-label="하트 리액션" onClick={() => onReact(task.id)}>
-                <AssetImage src={task.reacted ? reactionHeartPink : commonHeartOutline} alt="" />
-              </button>
-              <button aria-label="편지 쓰기" onClick={onWriteLetter}>
-                <AssetImage src={reactionLetter} alt="" />
-              </button>
-              <button aria-label="칭찬 표시">
-                <AssetImage src={reactionStar} alt="" />
-              </button>
+    <div className="home-screen">
+      <header className="home-topbar">
+        <div className="home-title-block">
+          <strong>우리의 이번 주</strong>
+          <span>{formatHomeWeekRange(weekStart, weekEnd)}</span>
+        </div>
+        <button className="home-bell" aria-label="알림" type="button" onClick={onNotifications}>
+          <AssetImage src={commonNotification} alt="" />
+          {unreadCount > 0 && <em>{unreadCount}</em>}
+        </button>
+      </header>
+
+      <section className="home-castle">
+        <div className="home-castle-badge">{level}단계 · {progress}%</div>
+        <button className="home-castle-info" aria-label="완수율 안내" type="button" onClick={onCastleExplain}>
+          <AssetImage src={commonInfo} alt="" />
+        </button>
+        <div className="home-castle-visual">
+          <AssetImage src={castleLevels[levelIndex]} alt={`${level}단계 성`} />
+        </div>
+      </section>
+
+      <section className="home-done-section">
+        <div className="home-section-head">
+          <h3>완료 <em>{completeCount}개</em></h3>
+        </div>
+
+        <div className="home-done-tabs" role="tablist">
+          <button
+            className={doneTab === "me" ? "active" : ""}
+            role="tab"
+            type="button"
+            onClick={() => setDoneTab("me")}
+          >
+            내가 한 일
+          </button>
+          <button
+            className={doneTab === "partner" ? "active" : ""}
+            role="tab"
+            type="button"
+            onClick={() => setDoneTab("partner")}
+          >
+            파트너가 한 일
+          </button>
+        </div>
+
+        {doneTab === "partner" && (
+          <button className="home-letter-button" type="button" onClick={onWriteLetter}>
+            <AssetImage src={reactionLetter} alt="" />
+            {partnerName}에게 편지 보내기
+          </button>
+        )}
+
+        {visibleDone.length === 0 ? (
+          <p className="home-empty">아직 완료한 일이 없어요</p>
+        ) : (
+          <ul className="home-done-list">
+            {visibleDone.map((task) => (
+              <li key={task.id}>
+                <div className="home-done-item">
+                  <AssetImage src={commonCheckboxFilled} alt="" />
+                  <span>{task.title}</span>
+                </div>
+                {doneTab === "partner" && (
+                  <div className="home-reaction-row">
+                    {reactionButtons.map((item) => (
+                      <button
+                        aria-label={`${item.label} 리액션`}
+                        disabled={task.reacted}
+                        key={item.value}
+                        type="button"
+                        onClick={() => onReact(task.id, task.title, item.value, item.label)}
+                      >
+                        <AssetImage src={item.src} alt="" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="home-todo-section">
+        <div className="home-section-head">
+          <h3>미완료 <em>{incomplete.length}개</em></h3>
+          {editMode ? (
+            <div className="home-edit-actions">
+              <button className="home-add-button" type="button" onClick={onAdd}>추가</button>
+              <button className="home-done-edit-button" type="button" onClick={exitEditMode}>완료</button>
             </div>
+          ) : (
+            <button className="home-edit-button" type="button" onClick={() => setEditMode(true)}>수정</button>
           )}
         </div>
-      ))}
-    </section>
+
+        {incomplete.length === 0 ? (
+          <p className="home-empty">이번 주 할 일을 모두 끝냈어요</p>
+        ) : (
+          Object.entries(incompleteGroups).map(([category, categoryTasks]) => {
+            const collapsed = Boolean(collapsedCategories[category]);
+            const iconKey = iconKeyForCategory(category);
+            return (
+              <div className="home-category" key={category}>
+                <button
+                  className="home-category-head"
+                  type="button"
+                  onClick={() => setCollapsedCategories((current) => ({
+                    ...current,
+                    [category]: !current[category],
+                  }))}
+                >
+                  <span className="home-category-icon">
+                    <AssetImage src={taskIconMap[iconKey]} alt="" />
+                  </span>
+                  <strong>{category}</strong>
+                  <em>{categoryTasks.length}</em>
+                  <span className="home-category-chevron">{collapsed ? "▾" : "▴"}</span>
+                </button>
+                {!collapsed && (
+                  <ul className="home-todo-list">
+                    {categoryTasks.map((task) => (
+                      <li key={task.id}>
+                        {editMode ? (
+                          editingTaskId === task.id ? (
+                            <div className="home-todo-edit-row">
+                              <input
+                                autoFocus
+                                maxLength={30}
+                                value={editingTitle}
+                                onChange={(event) => setEditingTitle(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") void saveEditTask();
+                                }}
+                              />
+                              <button className="home-save-button" type="button" onClick={() => void saveEditTask()}>
+                                저장
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="home-todo-manage-row">
+                              <span>{task.title}</span>
+                              <div className="home-todo-manage-actions">
+                                <button
+                                  aria-label="수정"
+                                  type="button"
+                                  onClick={() => startEditTask(task)}
+                                >
+                                  <AssetImage src={commonEdit} alt="" />
+                                </button>
+                                <button
+                                  aria-label="삭제"
+                                  type="button"
+                                  onClick={() => onDelete(task.id)}
+                                >
+                                  <AssetImage src={commonDelete} alt="" />
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        ) : (
+                          <button
+                            className="home-todo-item"
+                            type="button"
+                            onClick={() => onComplete(task.id)}
+                          >
+                            <AssetImage src={commonCheckboxOutline} alt="" />
+                            <span>{task.title}</span>
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -1829,8 +2804,7 @@ function CastleCard({
   total: number;
   onExplain?: () => void;
 }) {
-  const levelIndex = Math.min(castleLevels.length - 1, Math.max(0, Math.ceil(progress / 10) - 1));
-  const castleSrc = castleLevels[levelIndex];
+  const castleSrc = castleLevels[castleStageFromRate(progress) - 1];
 
   return (
     <section className="castle-card">
@@ -1850,59 +2824,354 @@ function CastleCard({
 }
 
 function LetterWriteScreen({
-  weekly,
   body,
   reaction,
-  progress,
+  partnerProfile,
   onBodyChange,
   onReactionChange,
   onBack,
+  onEmpty,
   onSend,
 }: {
-  weekly: boolean;
   body: string;
   reaction: string;
-  progress: number;
+  partnerProfile: AppPartnerProfile | null;
   onBodyChange: (value: string) => void;
   onReactionChange: (value: string) => void;
   onBack: () => void;
+  onEmpty: () => void;
   onSend: () => void;
 }) {
+  const meaningfulLength = body.replace(/\s/g, "").length;
+  const canSend = meaningfulLength >= 1;
+  const todayLabel = new Date().toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const handleBodyChange = (value: string) => {
+    let kept = "";
+    let count = 0;
+    for (const char of value) {
+      if (/\s/.test(char)) {
+        kept += char;
+        continue;
+      }
+      if (count >= 1000) break;
+      kept += char;
+      count += 1;
+    }
+    onBodyChange(kept);
+  };
+
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>×</button>
-      <Header
-        eyebrow={weekly ? "주간 칭찬" : "편지 쓰기"}
-        title={weekly ? "이번 주를 마무리하는 마음을 남겨요" : "파트너에게 마음을 보내요"}
-      />
-      {weekly && <div className="notice-box">이번 주 성 완공률은 {progress}%예요. 편지를 보내면 다음 주로 넘어갈 수 있어요.</div>}
-      <div className="recipient-card">받는 사람 <strong>파트너</strong> <AssetImage src={reactionHeartPink} alt="" /></div>
-      <textarea
-        className="letter-area"
-        maxLength={1000}
-        placeholder="고마웠던 마음을 자유롭게 써주세요"
-        value={body}
-        onChange={(event) => onBodyChange(event.target.value)}
-      />
-      <div className="reaction-picker">
-        {reactionOptions.map((item) => (
-          <button aria-label={item.label} className={reaction === item.value ? "selected" : ""} key={item.value} onClick={() => onReactionChange(item.value)}>
-            <AssetImage src={item.src} alt="" />
-          </button>
-        ))}
+    <div className="instant-letter-screen">
+      <header className="instant-letter-header">
+        <button className="instant-letter-cancel" type="button" onClick={onBack}>
+          × 취소
+        </button>
+        <h1>
+          편지 쓰기
+          <AssetImage src={reactionLetter} alt="" />
+        </h1>
+        <span className="instant-letter-spacer" aria-hidden />
+      </header>
+
+      <div className="instant-recipient-card">
+        <span className="instant-recipient-avatar">
+          <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
+        </span>
+        <div>
+          <em>받는 사람</em>
+          <strong>{partnerProfile?.nickname?.trim() || "파트너"}</strong>
+        </div>
+        <AssetImage src={reactionHeartPink} alt="" />
       </div>
-      <button className="primary-button sticky-bottom" onClick={onSend}>편지 보내기</button>
+
+      <div className="instant-letter-card">
+        <span className="instant-letter-date">{todayLabel}</span>
+        <textarea
+          placeholder="마음을 담아 자유롭게 써봐요 🌸"
+          value={body}
+          onChange={(event) => handleBodyChange(event.target.value)}
+        />
+        <em>{meaningfulLength} / 1000</em>
+      </div>
+
+      <div className="instant-sticker-card">
+        <span>스티커 첨부 (선택)</span>
+        <div className="instant-sticker-grid">
+          {reactionOptions.map((item) => (
+            <button
+              aria-label={item.label}
+              className={reaction === item.value ? "selected" : ""}
+              key={item.value}
+              type="button"
+              onClick={() => onReactionChange(reaction === item.value ? "" : item.value)}
+            >
+              <AssetImage src={item.src} alt="" />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        className={canSend ? "instant-send-button active" : "instant-send-button"}
+        type="button"
+        onClick={() => {
+          if (!canSend) {
+            onEmpty();
+            return;
+          }
+          onSend();
+        }}
+      >
+        <AssetImage src={reactionLetter} alt="" />
+        편지 보내기
+      </button>
     </div>
   );
 }
 
-function SentScreen({ onHome }: { onHome: () => void }) {
+function WeeklyLetterScreen({
+  body,
+  reaction,
+  progress,
+  weekStart,
+  weekEnd,
+  partnerProfile,
+  onBodyChange,
+  onReactionChange,
+  onEmpty,
+  onSend,
+}: {
+  body: string;
+  reaction: string;
+  progress: number;
+  weekStart: string;
+  weekEnd: string;
+  partnerProfile: AppPartnerProfile | null;
+  onBodyChange: (value: string) => void;
+  onReactionChange: (value: string) => void;
+  onEmpty: () => void;
+  onSend: () => void;
+}) {
+  const meaningfulLength = body.replace(/\s/g, "").length;
+  const canSend = meaningfulLength >= 1;
+  const levelIndex = castleStageFromRate(progress) - 1;
+
+  const handleBodyChange = (value: string) => {
+    let kept = "";
+    let count = 0;
+    for (const char of value) {
+      if (/\s/.test(char)) {
+        kept += char;
+        continue;
+      }
+      if (count >= 1000) break;
+      kept += char;
+      count += 1;
+    }
+    onBodyChange(kept);
+  };
+
   return (
-    <div className="center-screen">
-      <IconBubble src={reactionLetter} alt="편지" />
-      <h2>마음이 잘 도착했어요</h2>
-      <p>파트너가 오늘의 고마움을 확인할 수 있어요.</p>
-      <button className="primary-button" onClick={onHome}>홈으로 돌아가기</button>
+    <div className="weekly-letter-overlay" role="presentation">
+      <div className="weekly-letter-sheet" role="dialog" aria-modal="true" aria-labelledby="weekly-letter-title">
+        <div className="week-close-hero weekly-letter-hero">
+          <div className="week-close-badge">
+            <AssetImage src={commonCalendar} alt="" />
+            <span>{formatWeekCloseBadge(weekStart, weekEnd)}</span>
+          </div>
+          <div className="week-close-castle weekly-letter-castle">
+            <AssetImage src={castleLevels[levelIndex]} alt="이번 주 성" />
+          </div>
+        </div>
+
+        <h2 id="weekly-letter-title" className="weekly-letter-title">
+          편지를 써서 성을 완성하세요!
+          <span className="weekly-letter-title-icon"><AssetImage src={reactionLetter} alt="" /></span>
+        </h2>
+        <p className="weekly-letter-subtitle">파트너에게 이번 주 고마움을 전해봐요</p>
+
+        <div className="weekly-recipient-card" aria-readonly="true">
+          <div className="weekly-recipient-main">
+            <span className="weekly-recipient-avatar">
+              <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
+            </span>
+            <div className="weekly-recipient-text">
+              <em>받는 사람</em>
+              <strong>{partnerProfile?.nickname?.trim() || "파트너"}</strong>
+            </div>
+            <AssetImage src={reactionHeartPink} alt="" />
+          </div>
+        </div>
+
+        <div className="weekly-letter-field">
+          <textarea
+            placeholder="파트너에게 마음을 담아 자유롭게 써봐요"
+            value={body}
+            onChange={(event) => handleBodyChange(event.target.value)}
+          />
+          <em>{meaningfulLength} / 1000</em>
+        </div>
+
+        <div className="weekly-sticker-block">
+          <span>스티커 (선택)</span>
+          <div className="weekly-sticker-row">
+            {reactionOptions.map((item) => (
+              <button
+                aria-label={item.label}
+                aria-pressed={reaction === item.value}
+                className={reaction === item.value ? "selected" : ""}
+                key={item.value}
+                type="button"
+                onClick={() => onReactionChange(reaction === item.value ? "" : item.value)}
+              >
+                <AssetImage src={item.src} alt="" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          className={canSend ? "weekly-send-button active" : "weekly-send-button"}
+          type="button"
+          aria-disabled={!canSend}
+          onClick={() => {
+            if (!canSend) {
+              onEmpty();
+              return;
+            }
+            onSend();
+          }}
+        >
+          <AssetImage src={reactionLetter} alt="" />
+          {canSend ? "전송하고 완성된 성 보기" : "편지 보내고 성 완성하기"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SentScreen({
+  partnerProfile,
+  letter,
+  onHome,
+  onWriteAgain,
+}: {
+  partnerProfile: AppPartnerProfile | null;
+  letter: AppLetter | null;
+  onHome: () => void;
+  onWriteAgain: () => void;
+}) {
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const preview = letter?.body ?? "";
+
+  return (
+    <div className="letter-sent-screen">
+      <div className="letter-sent-hero">
+        <div className="letter-sent-glow">
+          <AssetImage src={reactionLetter} alt="" />
+        </div>
+      </div>
+
+      <h1>편지를 보냈어요! 🎉</h1>
+      <p className="letter-sent-subtitle">
+        {partnerName}에게 따뜻한 마음이 전달됐어요
+        <AssetImage src={reactionHeartPink} alt="" />
+      </p>
+
+      <article className="letter-sent-preview">
+        <div className="letter-sent-preview-head">
+          <span className="letter-sent-avatar">
+            <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
+          </span>
+          <div>
+            <em>받는 사람</em>
+            <strong>{partnerName}</strong>
+          </div>
+          <span className="letter-sent-time">방금 전</span>
+        </div>
+        <p className="letter-sent-body">{preview || "보낸 편지 내용이 없어요."}</p>
+      </article>
+
+      <div className="letter-sent-actions">
+        <button className="letter-sent-home" type="button" onClick={onHome}>
+          홈으로 돌아가기
+        </button>
+        <button className="letter-sent-again" type="button" onClick={onWriteAgain}>
+          편지 한 통 더 쓰기 ✉️
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function formatWeekCloseBadge(weekStart: string, weekEnd: string) {
+  if (!weekStart || !weekEnd) return "이번 주 마감";
+  const start = new Date(`${weekStart}T00:00:00`);
+  const end = new Date(`${weekEnd}T00:00:00`);
+  return `${start.getMonth() + 1}/${start.getDate()} – ${end.getMonth() + 1}/${end.getDate()} · 이번 주 마감`;
+}
+
+function WeekClosePopup({
+  weekStart,
+  weekEnd,
+  progress,
+  onWriteLetter,
+}: {
+  weekStart: string;
+  weekEnd: string;
+  progress: number;
+  onWriteLetter: () => void;
+}) {
+  const levelIndex = castleStageFromRate(progress) - 1;
+
+  return (
+    <div className="week-close-overlay" role="presentation">
+      <div className="week-close-popup" role="dialog" aria-modal="true" aria-labelledby="week-close-title">
+        <div className="week-close-hero">
+          <div className="week-close-badge">
+            <AssetImage src={commonCalendar} alt="" />
+            <span>{formatWeekCloseBadge(weekStart, weekEnd)}</span>
+          </div>
+          <div className="week-close-castle">
+            <AssetImage src={castleLevels[levelIndex]} alt="이번 주 성" />
+          </div>
+        </div>
+
+        <div className="week-close-brand">
+          <AssetImage src={mainLogo} alt="" />
+        </div>
+
+        <h2 id="week-close-title">이번 주 성 쌓기가 종료되었어요!</h2>
+        <p className="week-close-subtitle">
+          둘이 함께 열심히 쌓았어요💕
+          <br />
+          이번 주 결과를 확인해볼까요?
+        </p>
+
+        <div className="week-close-teasers" aria-hidden>
+          <div>
+            <strong className="green">?개</strong>
+            <span>완료한 일</span>
+          </div>
+          <div>
+            <strong className="orange">??%</strong>
+            <span>전체 진행률</span>
+          </div>
+          <div>
+            <strong className="purple">?단계</strong>
+            <span>달성 단계</span>
+          </div>
+        </div>
+
+        <button className="week-close-cta" type="button" onClick={onWriteLetter}>
+          편지쓰기 →
+        </button>
+      </div>
     </div>
   );
 }
@@ -1914,12 +3183,25 @@ function CloseWeekScreen({ onCancel, onNext }: { onCancel: () => void; onNext: (
         <h2>이번 주를 마무리할까요?</h2>
         <p>칭찬 편지를 작성하면 이번 주 기록이 저장되고 다음 주 할 일을 다시 고를 수 있어요.</p>
         <div className="modal-actions">
-          <button className="ghost-button" onClick={onCancel}>취소</button>
-          <button className="primary-button" onClick={onNext}>다음 주로 넘어가기</button>
+          <button className="modal-cancel" onClick={onCancel}>취소</button>
+          <button className="modal-confirm" onClick={onNext}>다음으로 →</button>
         </div>
       </div>
     </div>
   );
+}
+
+function reactionAsset(value: string) {
+  return reactionOptions.find((item) => item.value === value)?.src ?? null;
+}
+
+function formatLetterDayLabel(letter: AppLetter) {
+  const source = letter.createdAt || letter.date;
+  const date = new Date(source);
+  if (!Number.isNaN(date.getTime())) {
+    return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+  }
+  return letter.date;
 }
 
 function StatsScreen({
@@ -1928,12 +3210,19 @@ function StatsScreen({
   totalCount,
   meDone,
   partnerDone,
-  choreContribution,
-  letterContribution,
+  tasks,
+  weekStart,
+  weekEnd,
   complete,
   weekStreak,
-  weeklyLetterStatus,
-  onNext,
+  myLetter,
+  partnerLetter,
+  selectedEmoji,
+  partnerProfile,
+  entry,
+  onBack,
+  onNextWeek,
+  onSelectLetter,
   isSaving,
 }: {
   progress: number;
@@ -1941,132 +3230,595 @@ function StatsScreen({
   totalCount: number;
   meDone: number;
   partnerDone: number;
-  choreContribution: number;
-  letterContribution: number;
+  tasks: AppTask[];
+  weekStart: string;
+  weekEnd: string;
   complete: boolean;
   weekStreak: number;
-  weeklyLetterStatus: { meSent: boolean; partnerSent: boolean; bothSent: boolean };
-  onNext: () => void;
+  myLetter: AppLetter | null;
+  partnerLetter: AppLetter | null;
+  selectedEmoji: string;
+  partnerProfile: AppPartnerProfile | null;
+  entry: "letter" | "castle";
+  onBack: () => void;
+  onNextWeek: () => void;
+  onSelectLetter: (letter: AppLetter) => void;
   isSaving: boolean;
 }) {
+  const level = castleStageFromRate(progress);
+  const levelIndex = level - 1;
+  const doneTotal = meDone + partnerDone;
+  const mePercent = doneTotal === 0 ? 0 : Math.round((meDone / doneTotal) * 100);
+  const partnerPercent = doneTotal === 0 ? 0 : 100 - mePercent;
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const mvpLabel = doneTotal === 0
+    ? null
+    : meDone === partnerDone
+      ? "공동 MVP"
+      : partnerDone > meDone
+        ? `${partnerName} MVP`
+        : "나 MVP";
+  const myTasks = tasks.filter((task) => task.done && task.assignee === "me");
+  const partnerTasks = tasks.filter((task) => task.done && task.assignee === "partner");
+  const summaryText = complete || progress >= 100
+    ? `🎉 이번 주 집안일 100% 완료! 둘이 합쳐 ${completeCount}개를 해냈어요. 우리 집이 완공됐어요! 🏰`
+    : `🎉 이번 주 집안일 ${progress}% 완료! 둘이 함께 ${completeCount}개를 해냈어요. 파트너의 편지가 오면 우리 집을 완공해요 🏰`;
+  const nextWeekSub = complete || progress >= 100
+    ? "100% 완성! 다음 성도 지으러 가요"
+    : "꾸준히 함께하고 있어요. 다음 주도 화이팅";
+
   return (
-    <div className={complete ? "stack-screen stats-screen complete" : "stack-screen stats-screen incomplete"}>
-      {complete && weekStreak > 0 && (
-        <div className="streak-banner">🔥 {weekStreak}주 연속 완성 중!</div>
+    <div className={`weekly-report-screen${entry === "castle" ? " with-tab" : " with-cta"}`}>
+      <header className="weekly-report-header">
+        <button className="weekly-report-back" type="button" disabled={isSaving} onClick={onBack}>
+          {isSaving ? "준비 중..." : "< 뒤로"}
+        </button>
+        <div className="weekly-report-title-block">
+          <span className="weekly-report-range">{formatReportWeekRange(weekStart, weekEnd)}</span>
+          <strong>주간 완료 리포트</strong>
+        </div>
+        <div className="weekly-report-badge">
+          <AssetImage src={commonTrophy} alt="" />
+          <span>{level}단계 완공</span>
+        </div>
+      </header>
+
+      <div className="weekly-report-scroll">
+        <div className="weekly-report-castle">
+          <AssetImage src={castleLevels[levelIndex]} alt={`${level}단계 성`} />
+        </div>
+
+        <div className="weekly-report-summary">
+          <AssetImage src={reactionParty} alt="" />
+          <p>{summaryText}</p>
+        </div>
+
+        <div className="weekly-report-stats" aria-hidden>
+          <div className="weekly-stat-card">
+            <strong className="green">{completeCount}개</strong>
+            <em>{completeCount} / {totalCount || 0}개</em>
+            <span>완료</span>
+          </div>
+          <div className="weekly-stat-card">
+            <strong className="pink">{mePercent}%</strong>
+            <em>{meDone}개</em>
+            <span>내 기여</span>
+          </div>
+          <div className="weekly-stat-card">
+            <strong className="purple">{partnerPercent}%</strong>
+            <em>{partnerDone}개</em>
+            <span>파트너</span>
+          </div>
+        </div>
+
+        <section className="weekly-report-section">
+          <div className="weekly-report-section-head">
+            <h3>
+              <AssetImage src={commonStatistics} alt="" />
+              기여도
+            </h3>
+            {mvpLabel && <span className="weekly-mvp-badge">✨ {mvpLabel}</span>}
+          </div>
+          <div className="weekly-contrib-bar" aria-hidden>
+            <span className="me" style={{ width: `${Math.max(mePercent, doneTotal === 0 ? 0 : 4)}%` }} />
+            <span className="partner" style={{ width: `${Math.max(partnerPercent, doneTotal === 0 ? 0 : 4)}%` }} />
+          </div>
+          <div className="weekly-contrib-legend">
+            <div>
+              <i className="dot me" />
+              <span>나</span>
+              <b className="bar me" style={{ width: `${mePercent}%` }} />
+              <em>{meDone}개 · {mePercent}%</em>
+            </div>
+            <div>
+              <i className="dot partner" />
+              <span>파트너</span>
+              <b className="bar partner" style={{ width: `${partnerPercent}%` }} />
+              <em>{partnerDone}개 · {partnerPercent}%</em>
+            </div>
+          </div>
+        </section>
+
+        <section className="weekly-report-chores">
+          <div>
+            <h4><i className="dot me" /> 내가 한 일</h4>
+            <ul>
+              {myTasks.length === 0 ? (
+                <li className="empty">완료한 일이 없어요</li>
+              ) : myTasks.map((task) => (
+                <li key={task.id}>
+                  <span className="task-icon">
+                    <AssetImage src={taskIconMap[task.iconKey ?? iconKeyForCategory(task.category)]} alt="" />
+                  </span>
+                  <span>{task.title}</span>
+                  <em>✓</em>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h4><i className="dot partner" /> 파트너가 한 일</h4>
+            <ul>
+              {partnerTasks.length === 0 ? (
+                <li className="empty">완료한 일이 없어요</li>
+              ) : partnerTasks.map((task) => (
+                <li key={task.id}>
+                  <span className="task-icon">
+                    <AssetImage src={taskIconMap[task.iconKey ?? iconKeyForCategory(task.category)]} alt="" />
+                  </span>
+                  <span>{task.title}</span>
+                  <em>✓</em>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        <section className="weekly-report-section letters">
+          <h3>
+            <AssetImage src={reactionLetter} alt="" />
+            주고받은 편지
+          </h3>
+          <div className="weekly-letter-pair">
+            <div className="weekly-letter-side">
+              <span className="label">
+                <AvatarMark value={selectedEmoji} />
+                내가 쓴 편지
+              </span>
+              {myLetter ? (
+                <button
+                  className="weekly-letter-card me"
+                  type="button"
+                  onClick={() => onSelectLetter(myLetter)}
+                >
+                  {reactionAsset(myLetter.reaction) && (
+                    <span className="weekly-letter-sticker">
+                      <AssetImage src={reactionAsset(myLetter.reaction)!} alt="" />
+                    </span>
+                  )}
+                  <div className="weekly-letter-card-head">
+                    <strong>나</strong>
+                    <em>{formatLetterDayLabel(myLetter)}</em>
+                  </div>
+                  <p>{myLetter.body}</p>
+                </button>
+              ) : (
+                <div className="weekly-letter-empty">
+                  <AssetImage src={commonMailbox} alt="" />
+                  <span>아직 편지가 없어요.</span>
+                </div>
+              )}
+            </div>
+            <div className="weekly-letter-side">
+              <span className="label">
+                <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-queen"} />
+                파트너가 쓴 편지
+              </span>
+              {partnerLetter ? (
+                <button
+                  className="weekly-letter-card partner"
+                  type="button"
+                  onClick={() => onSelectLetter(partnerLetter)}
+                >
+                  {reactionAsset(partnerLetter.reaction) && (
+                    <span className="weekly-letter-sticker">
+                      <AssetImage src={reactionAsset(partnerLetter.reaction)!} alt="" />
+                    </span>
+                  )}
+                  <div className="weekly-letter-card-head">
+                    <strong>{partnerName}</strong>
+                    <em>{formatLetterDayLabel(partnerLetter)}</em>
+                  </div>
+                  <p>{partnerLetter.body}</p>
+                </button>
+              ) : (
+                <div className="weekly-letter-empty">
+                  <AssetImage src={commonMailbox} alt="" />
+                  <span>아직 편지가 없어요.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {entry === "castle" && weekStreak > 0 && (
+          <div className="weekly-streak-banner" aria-hidden>
+            <AssetImage src={reactionClap} alt="" />
+            <div>
+              <strong>{weekStreak}주 연속 달성 중!</strong>
+              <p>꾸준히 함께하고 있어요. 이번 주도 화이팅</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {entry === "letter" && (
+        <div className="weekly-report-cta">
+          <button className="weekly-next-button" type="button" disabled={isSaving} onClick={onNextWeek}>
+            <AssetImage src={reactionClover} alt="" />
+            <span>
+              <strong>{isSaving ? "다음 주 준비 중..." : "다음주 할일 설정 하러 가기"}</strong>
+              <em>{nextWeekSub}</em>
+            </span>
+          </button>
+        </div>
       )}
-      <Header
-        eyebrow="주간 통계"
-        title={complete ? "이번 주 성이 완성됐어요!" : "다음 주엔 조금 더 완성해봐요"}
-      />
-      {complete && <p className="celebration-text">서로의 노력이 모여 성이 한층 더 높아졌어요.</p>}
-      <CastleCard progress={progress} completeCount={completeCount} total={totalCount || 1} />
-      <div className="contribution-section">
-        <h3>이번 주 기여</h3>
-        <div className="contribution-row">
-          <span>집안일 (최대 80%)</span>
-          <strong>{choreContribution}%</strong>
-        </div>
-        <div className="progress-bar contribution-bar"><span style={{ width: `${(choreContribution / 80) * 100}%` }} /></div>
-        <div className="contribution-row">
-          <span>주간 편지 (최대 10%)</span>
-          <strong>{letterContribution}%</strong>
-        </div>
-        <div className="progress-bar contribution-bar letter"><span style={{ width: `${(letterContribution / 10) * 100}%` }} /></div>
-        <p className="helper-text">
-          {weeklyLetterStatus.bothSent
-            ? "두 분 모두 주간 편지를 보냈어요."
-            : weeklyLetterStatus.meSent
-              ? "내 편지는 보냈어요. 파트너 편지를 기다려요."
-              : "주간 편지를 보내면 기여도가 올라가요."}
-        </p>
-      </div>
-      <div className="stats-grid">
-        <div><strong>{completeCount}</strong><span>완료 항목</span></div>
-        <div><strong>{meDone}</strong><span>내 기여</span></div>
-        <div><strong>{partnerDone}</strong><span>파트너 기여</span></div>
-      </div>
-      <button className="primary-button sticky-bottom" disabled={isSaving} onClick={onNext}>
-        {isSaving ? "다음 주 준비 중..." : "다음 할 일 설정하러 가기"}
-      </button>
     </div>
   );
+}
+
+function sameCalendarDay(iso: string, year: number, month: number, day: number) {
+  const date = new Date(iso);
+  return date.getFullYear() === year && date.getMonth() === month && date.getDate() === day;
+}
+
+function formatMonthDayLabel(year: number, month: number, day: number) {
+  return `${month + 1}월 ${day}일`;
 }
 
 function LettersScreen({
   letters,
-  onSelect,
+  reactions,
+  partnerProfile,
+  nickname,
+  onSelectLetter,
+  onSelectReaction,
 }: {
   letters: AppLetter[];
-  onSelect: (letter: AppLetter) => void;
+  reactions: AppReaction[];
+  partnerProfile: AppPartnerProfile | null;
+  nickname: string;
+  onSelectLetter: (letter: AppLetter) => void;
+  onSelectReaction: (reaction: AppReaction) => void;
 }) {
   const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const letterDays = new Set(
-    letters
-      .map((letter) => letter.date.match(/\d+/g)?.map(Number))
-      .filter((parts): parts is number[] => Boolean(parts && parts.length >= 3))
-      .filter(([letterYear, letterMonth]) => letterYear === year && letterMonth === month + 1)
-      .map(([, , day]) => day),
-  );
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [selectedDay, setSelectedDay] = useState(today.getDate());
+  const [tab, setTab] = useState<"partner" | "me">("partner");
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const startWeekday = new Date(viewYear, viewMonth, 1).getDay();
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const myName = nickname.trim() || "나";
+
+  const filteredLetters = letters.filter((letter) => (tab === "me" ? letter.from === "me" : letter.from === "partner"));
+  const filteredReactions = reactions.filter((reaction) => (tab === "me" ? reaction.from === "me" : reaction.from === "partner"));
+
+  const dayLetters = filteredLetters
+    .filter((letter) => sameCalendarDay(letter.createdAt, viewYear, viewMonth, selectedDay))
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const dayReactions = filteredReactions
+    .filter((reaction) => sameCalendarDay(reaction.createdAt, viewYear, viewMonth, selectedDay))
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+
+  const markersByDay = useMemo(() => {
+    const map = new Map<number, { kind: "letter" | "reaction"; value: string; at: number }[]>();
+    const push = (iso: string, kind: "letter" | "reaction", value: string) => {
+      const date = new Date(iso);
+      if (date.getFullYear() !== viewYear || date.getMonth() !== viewMonth) return;
+      const day = date.getDate();
+      const list = map.get(day) ?? [];
+      list.push({ kind, value, at: +date });
+      map.set(day, list);
+    };
+    filteredLetters.forEach((letter) => push(letter.createdAt, "letter", letter.reaction || "💌"));
+    filteredReactions.forEach((reaction) => push(reaction.createdAt, "reaction", reaction.reaction));
+    map.forEach((list, day) => {
+      list.sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === "letter" ? -1 : 1;
+        return b.at - a.at;
+      });
+      map.set(day, list.slice(0, 3));
+    });
+    return map;
+  }, [filteredLetters, filteredReactions, viewYear, viewMonth]);
+
+  const shiftMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    setSelectedDay(1);
+  };
+
+  const dateLabel = formatMonthDayLabel(viewYear, viewMonth, selectedDay);
+  const letterSectionTitle = tab === "partner" ? `내가 받은 편지 · ${dateLabel}` : `내가 보낸 편지 · ${dateLabel}`;
+  const reactionSectionTitle = tab === "partner" ? `내가 받은 리액션 · ${dateLabel}` : `내가 보낸 리액션 · ${dateLabel}`;
 
   return (
-    <div className="stack-screen">
-      <Header eyebrow="편지 모아" title="주고받은 마음" />
-      <div className="calendar-card">
-        <div className="month-title">{year}년 {month + 1}월</div>
-        <div className="calendar-grid">
-          {Array.from({ length: daysInMonth }, (_, index) => (
-            <span className={letterDays.has(index + 1) ? "has-letter" : ""} key={index}>{index + 1}</span>
+    <div className="letters-screen">
+      <header className="letters-title">
+        <strong>
+          편지 모아
+          <AssetImage src={reactionLetter} alt="" />
+        </strong>
+      </header>
+
+      <div className="letters-tabs" role="tablist">
+        <button
+          className={tab === "partner" ? "active" : ""}
+          role="tab"
+          type="button"
+          onClick={() => setTab("partner")}
+        >
+          <AssetImage src={reactionHeartPurple} alt="" />
+          상대방이 보낸 편지
+        </button>
+        <button
+          className={tab === "me" ? "active" : ""}
+          role="tab"
+          type="button"
+          onClick={() => setTab("me")}
+        >
+          <AssetImage src={reactionHeartPink} alt="" />
+          내가 보낸 편지
+        </button>
+      </div>
+
+      <section className="letters-calendar">
+        <div className="letters-month-nav">
+          <button type="button" aria-label="이전 달" onClick={() => shiftMonth(-1)}>‹</button>
+          <strong>{viewYear}년 {viewMonth + 1}월</strong>
+          <button type="button" aria-label="다음 달" onClick={() => shiftMonth(1)}>›</button>
+        </div>
+
+        <div className="letters-weekdays">
+          {["일", "월", "화", "수", "목", "금", "토"].map((label, index) => (
+            <span className={index === 0 ? "sun" : index === 6 ? "sat" : ""} key={label}>{label}</span>
           ))}
         </div>
-      </div>
-      {letters.length === 0 ? (
-        <EmptyState
-          icon={reactionLetter}
-          title="아직 주고받은 편지가 없어요"
-          description="완료한 집안일에 마음을 보내면 이곳에 차곡차곡 모여요."
-        />
-      ) : letters.map((letter) => (
-        <article className="letter-card clickable" key={letter.id} onClick={() => onSelect(letter)}>
-          <span>{letter.from === "me" ? "내가 보낸 편지" : "상대방이 보낸 편지"} · {letter.date}</span>
-          <h3>{letter.reaction} {letter.title}</h3>
-          <p>{letter.body.slice(0, 80)}{letter.body.length > 80 ? "..." : ""}</p>
-        </article>
-      ))}
+
+        <div className="letters-days">
+          {Array.from({ length: startWeekday }, (_, index) => (
+            <span className="empty" key={`pad-${index}`} />
+          ))}
+          {Array.from({ length: daysInMonth }, (_, index) => {
+            const day = index + 1;
+            const weekday = new Date(viewYear, viewMonth, day).getDay();
+            const markers = markersByDay.get(day) ?? [];
+            return (
+              <button
+                className={[
+                  "letters-day",
+                  selectedDay === day ? "selected" : "",
+                  weekday === 0 ? "sun" : "",
+                  weekday === 6 ? "sat" : "",
+                ].filter(Boolean).join(" ")}
+                key={day}
+                type="button"
+                onClick={() => setSelectedDay(day)}
+              >
+                <em>{day}</em>
+                {markers.length > 0 && (
+                  <span className="letters-day-markers">
+                    {markers.map((marker, markerIndex) => (
+                      <i key={`${day}-${markerIndex}`}>{marker.value || "💌"}</i>
+                    ))}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="letters-section">
+        <div className="letters-section-head">
+          <h3>{letterSectionTitle}</h3>
+          <em>{dayLetters.length}개</em>
+        </div>
+        {dayLetters.length === 0 ? (
+          <p className="letters-empty">이 날의 편지가 없어요</p>
+        ) : (
+          <ul className="letters-feed">
+            {dayLetters.map((letter) => (
+              <li key={letter.id}>
+                <button className="letters-feed-card" type="button" onClick={() => onSelectLetter(letter)}>
+                  <span className="letters-feed-emoji">{letter.reaction || "💌"}</span>
+                  <div>
+                    <strong>💌 편지</strong>
+                    <p>{letter.body}</p>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="letters-section">
+        <div className="letters-section-head">
+          <h3>{reactionSectionTitle}</h3>
+          <em>{dayReactions.length}개</em>
+        </div>
+        {dayReactions.length === 0 ? (
+          <p className="letters-empty">이 날의 리액션이 없어요</p>
+        ) : (
+          <ul className="letters-feed">
+            {dayReactions.map((reaction) => (
+              <li key={reaction.id}>
+                <button className="letters-feed-card reaction" type="button" onClick={() => onSelectReaction(reaction)}>
+                  <span className="letters-feed-emoji">{reaction.reaction}</span>
+                  <div>
+                    <strong>
+                      💕 {tab === "partner" ? partnerName : myName} 님이 리액션을 보냈어요
+                    </strong>
+                    <p>{reaction.choreTitle}</p>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }
 
-function LetterDetailScreen({ letter, onBack }: { letter: AppLetter; onBack: () => void }) {
+function LetterDetailModal({
+  letter,
+  senderEmoji,
+  senderName,
+  onClose,
+}: {
+  letter: AppLetter;
+  senderEmoji: string;
+  senderName: string;
+  onClose: () => void;
+}) {
+  const sticker = reactionAsset(letter.reaction);
+  const dateLabel = letter.createdAt
+    ? new Date(letter.createdAt).toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })
+    : letter.date;
+
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header
-        eyebrow={letter.from === "me" ? "내가 보낸 편지" : "상대방이 보낸 편지"}
-        title={letter.date}
-      />
-      <article className="letter-detail-card">
-        <span className="letter-reaction">{letter.reaction}</span>
-        <h3>{letter.title}</h3>
-        <p>{letter.body}</p>
-      </article>
+    <div className="letter-detail-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="letter-detail-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="편지 상세"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="letter-detail-handle" aria-hidden />
+        <button className="letter-detail-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+
+        <div className="letter-detail-sender">
+          <span className="letter-detail-avatar">
+            <AvatarMark value={senderEmoji} />
+          </span>
+          <div>
+            <em>보낸 사람</em>
+            <strong>{senderName}</strong>
+          </div>
+        </div>
+
+        <div className="letter-detail-content">
+          <div className="letter-detail-content-head">
+            <span className="letter-detail-sticker">
+              {sticker ? <AssetImage src={sticker} alt="" /> : null}
+            </span>
+            <em>{dateLabel}</em>
+          </div>
+          <p>{letter.body}</p>
+        </div>
+      </div>
     </div>
   );
+}
+
+function ReactionDetailModal({
+  reaction,
+  senderEmoji,
+  senderName,
+  onClose,
+}: {
+  reaction: AppReaction;
+  senderEmoji: string;
+  senderName: string;
+  onClose: () => void;
+}) {
+  const sticker = reactionAsset(reaction.reaction);
+  const dateLabel = reaction.createdAt
+    ? new Date(reaction.createdAt).toLocaleDateString("ko-KR", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    })
+    : reaction.date;
+
+  return (
+    <div className="letter-detail-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="letter-detail-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="리액션 상세"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="letter-detail-handle" aria-hidden />
+        <button className="letter-detail-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+
+        <div className="letter-detail-sender">
+          <span className="letter-detail-avatar">
+            <AvatarMark value={senderEmoji} />
+          </span>
+          <div>
+            <em>보낸 사람</em>
+            <strong>{senderName}</strong>
+          </div>
+        </div>
+
+        <div className="letter-detail-content">
+          <div className="letter-detail-content-head">
+            <span className="letter-detail-sticker">
+              {sticker ? <AssetImage src={sticker} alt="" /> : (
+                <span className="letter-detail-sticker-emoji">{reaction.reaction}</span>
+              )}
+            </span>
+            <em>{dateLabel}</em>
+          </div>
+          <p>{senderName} 님이 리액션을 보냈어요{"\n"}{reaction.choreTitle}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatCastleWeekRange(weekStart: string, weekEnd: string) {
+  if (!weekStart || !weekEnd) return "";
+  const start = weekStart.replace(/-/g, ".");
+  const endDay = weekEnd.slice(8);
+  return `${start}-${endDay}`;
+}
+
+function isWeekEnded(weekEnd: string) {
+  if (!weekEnd) return false;
+  const end = new Date(`${weekEnd}T23:59:59`);
+  return end.getTime() < Date.now();
 }
 
 function CastleHistoryScreen({
   stats,
-  onExplain,
+  onSelectWeek,
 }: {
   stats: AppWeeklyStat[];
-  onExplain: () => void;
+  onSelectWeek: (stat: AppWeeklyStat) => void;
 }) {
   return (
-    <div className="stack-screen">
-      <Header eyebrow="성 모아" title="매주 쌓은 우리의 기록" />
-      <button className="text-button castle-explain-link" onClick={onExplain}>성 완성 규칙 보기</button>
+    <div className="castle-history-screen">
+      <header className="castle-history-header">
+        <strong>
+          성 모아
+          <AssetImage src={castleLevel10} alt="" />
+        </strong>
+        <span>매주 쌓아온 우리의 기록</span>
+      </header>
+
       {stats.length === 0 ? (
         <EmptyState
           icon={castleLevel1}
@@ -2074,17 +3826,49 @@ function CastleHistoryScreen({
           description="이번 주를 마무리하면 성 완공률과 기여 기록이 이곳에 쌓여요."
         />
       ) : (
-        <div className="history-grid">
-          {stats.map((stat) => (
-          <article className={stat.completionRate >= 100 ? "history-card complete" : "history-card"} key={stat.id}>
-            <div className="mini-castle"><AssetImage src={castleLevels[Math.min(castleLevels.length - 1, Math.max(0, Math.ceil(stat.completionRate / 10) - 1))]} alt="" /></div>
-            <strong>{stat.completionRate}%</strong>
-            <span>{stat.weekStart} - {stat.weekEnd}</span>
-            <div className="progress-bar"><span style={{ width: `${stat.completionRate}%` }} /></div>
-          </article>
-          ))}
+        <div className="castle-history-grid">
+          {stats.map((stat) => {
+            const complete = stat.completionRate >= 100;
+            const waitingLetter = isWeekEnded(stat.weekEnd) && !stat.partnerLetterReceived;
+            return (
+              <button
+                className={[
+                  "castle-history-card",
+                  complete ? "complete" : "",
+                  waitingLetter ? "waiting" : "",
+                ].filter(Boolean).join(" ")}
+                key={stat.id}
+                type="button"
+                onClick={() => onSelectWeek(stat)}
+              >
+                <div className="castle-history-visual">
+                  <AssetImage
+                    src={castleLevels[castleStageFromRate(stat.completionRate) - 1]}
+                    alt={`${stat.completionRate}% 성`}
+                  />
+                  {waitingLetter && (
+                    <div className="castle-history-lock">
+                      <AssetImage src={reactionLetter} alt="" />
+                      <span>아직 받은 편지가 없어요</span>
+                    </div>
+                  )}
+                </div>
+                <div className="castle-history-meta">
+                  <em>{formatCastleWeekRange(stat.weekStart, stat.weekEnd)}</em>
+                  <div className="castle-history-rate">
+                    <div className="castle-history-bar">
+                      <span style={{ width: `${Math.min(100, Math.max(0, stat.completionRate))}%` }} />
+                    </div>
+                    <strong>{stat.completionRate}%</strong>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
+
+      <p className="castle-history-hint">카드를 탭하면 상세 기록을 볼 수 있어요</p>
     </div>
   );
 }
@@ -2095,10 +3879,88 @@ function CastleExplainScreen({ onBack }: { onBack: () => void }) {
       <button className="icon-button" onClick={onBack}>‹</button>
       <Header eyebrow="성 완성 가이드" title="성은 어떻게 완성되나요?" />
       <div className="notice-box">
-        <p>집안일 완료율이 성의 높이를 결정해요. 이번 주 할 일을 80% 이상 완료하면 성이 한 단계씩 자라요.</p>
-        <p>주간 칭찬 편지를 서로 보내면 추가 10% 기여가 더해져요. 꾸준히 함께하면 연속 완성 기록도 쌓여요.</p>
+        <p>성은 할 일을 12.5% 달성할 때마다 한 단계씩 업그레이드됩니다. 총 10단계로 구성되어 있으며, 할 일만으로는 8단계까지 성장할 수 있습니다.</p>
+        <p>최종 9·10단계는 파트너에게 편지를 작성해야 완성할 수 있습니다. 할일 완수율(%) = (완료한 할일 수 / 전체 할일 수) × 80 + 편지 보너스(각 10%).</p>
       </div>
       <CastleCard progress={72} completeCount={7} total={10} />
+    </div>
+  );
+}
+
+function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="castle-upgrade-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="castle-upgrade-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="castle-upgrade-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="castle-upgrade-header">
+          <h2 id="castle-upgrade-title">
+            <span className="castle-upgrade-title-icon">
+              <AssetImage src={castleLevel10} alt="" />
+            </span>
+            성 업그레이드
+          </h2>
+          <button className="castle-upgrade-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+        </div>
+
+        <div className="castle-upgrade-stages">
+          <div className="castle-upgrade-row">
+            {castleLevels.slice(0, 3).map((src, index) => (
+              <div className="castle-upgrade-stage" key={`stage-${index + 1}`}>
+                <AssetImage src={src} alt={`${index + 1}단계`} />
+                {index < 2 && <span className="castle-upgrade-arrow">›</span>}
+              </div>
+            ))}
+          </div>
+          <div className="castle-upgrade-row">
+            {castleLevels.slice(3, 6).map((src, index) => (
+              <div className="castle-upgrade-stage" key={`stage-${index + 4}`}>
+                <AssetImage src={src} alt={`${index + 4}단계`} />
+                {index < 2 && <span className="castle-upgrade-arrow">›</span>}
+              </div>
+            ))}
+          </div>
+          <div className="castle-upgrade-row">
+            {castleLevels.slice(6, 8).map((src, index) => (
+              <div className="castle-upgrade-stage" key={`stage-${index + 7}`}>
+                <AssetImage src={src} alt={`${index + 7}단계`} />
+                {index < 1 && <span className="castle-upgrade-arrow">›</span>}
+              </div>
+            ))}
+          </div>
+
+          <div className="castle-upgrade-divider" />
+
+          <div className="castle-upgrade-row final">
+            <div className="castle-upgrade-letter">
+              <AssetImage src={reactionLetter} alt="" />
+            </div>
+            <span className="castle-upgrade-arrow">›</span>
+            <div className="castle-upgrade-stage">
+              <AssetImage src={castleLevels[8]} alt="9단계" />
+            </div>
+            <span className="castle-upgrade-arrow">›</span>
+            <div className="castle-upgrade-stage">
+              <AssetImage src={castleLevels[9]} alt="10단계" />
+            </div>
+          </div>
+        </div>
+
+        <p className="castle-upgrade-guide">
+          성은 할 일을 12.5% 달성할 때마다 한 단계씩 업그레이드됩니다.
+          {"\n"}총 10단계로 구성되어 있으며,
+          {"\n"}할 일만으로는 8단계까지 성장할 수 있습니다.
+          {"\n"}최종 9·10단계는 파트너에게 편지를 작성해야 완성할 수 있습니다.
+        </p>
+
+        <button className="castle-upgrade-done" type="button" onClick={onClose}>
+          닫기
+        </button>
+      </div>
     </div>
   );
 }
@@ -2106,99 +3968,471 @@ function CastleExplainScreen({ onBack }: { onBack: () => void }) {
 function MyPageScreen({
   nickname,
   selectedEmoji,
-  myCode,
   partnerProfile,
+  notificationEnabled,
   onEdit,
   onManageTasks,
-  onPartnerManage,
-  onNotificationSettings,
-  onAccountSettings,
+  onConnectPartner,
+  onLogout,
+  showConfirm,
+  showAlert,
 }: {
   nickname: string;
   selectedEmoji: string;
-  myCode: string;
   partnerProfile: AppPartnerProfile | null;
+  notificationEnabled: boolean;
   onEdit: () => void;
   onManageTasks: () => void;
-  onPartnerManage: () => void;
-  onNotificationSettings: () => void;
-  onAccountSettings: () => void;
+  onConnectPartner: () => void;
+  onLogout: () => void;
+  showConfirm: (
+    title: string,
+    message: string,
+    onConfirm: () => void,
+    confirmLabel?: string,
+    cancelLabel?: string,
+  ) => void;
+  showAlert: (title: string, message: string) => void;
 }) {
+  const [autoRepeat, setAutoRepeat] = useState(true);
+  const [notifPartnerDone, setNotifPartnerDone] = useState(true);
+  const [notifLetter, setNotifLetter] = useState(true);
+  const [notifProgress, setNotifProgress] = useState(true);
+  const [notifWeekly, setNotifWeekly] = useState(false);
+  const connected = Boolean(partnerProfile);
+
+  const openDisconnectConfirm = () => {
+    showConfirm(
+      "파트너 연결을 해제할까요?",
+      "연결을 해제하면 함께한 할 일 목록과 성 히스토리가 모두 사라지며, 이후 할 일을 새로 설정해야 해요.",
+      () => showAlert("알림", "연결 해제 기능은 준비 중이에요."),
+      "해제할게요",
+      "취소",
+    );
+  };
+
   return (
-    <div className="stack-screen">
-      <Header eyebrow="마이페이지" title="내 정보와 설정" />
-      <div className="profile-card">
-        <div className="avatar"><AvatarMark value={selectedEmoji} /></div>
-        <div>
-          <strong>{nickname}</strong>
-          <span>{myCode || "초대 코드 없음"}</span>
-          {partnerProfile && <span>파트너: {partnerProfile.nickname}</span>}
+    <div className="settings-screen">
+      <h1 className="settings-title">설정</h1>
+
+      <section className="settings-section">
+        <h2>내 프로필</h2>
+        <div className="settings-profile-card">
+          <span className="settings-avatar">
+            <AvatarMark value={selectedEmoji} />
+          </span>
+          <strong>{nickname.trim() || "모아"}</strong>
+          <button className="settings-edit-chip" type="button" onClick={onEdit}>수정</button>
         </div>
-        <button onClick={onEdit}>수정</button>
-      </div>
-      <div className="menu-list">
-        <button onClick={onManageTasks}>할 일 목록 관리 <span>›</span></button>
-        <button onClick={onPartnerManage}>파트너 연결 관리 <span>›</span></button>
-        <button onClick={onNotificationSettings}>알림 설정 <span>›</span></button>
-        <button onClick={onAccountSettings}>계정 설정 <span>›</span></button>
+      </section>
+
+      <section className="settings-section">
+        <h2>파트너 관리</h2>
+        <div className="settings-card">
+          <div className="settings-partner-row">
+            <span className="settings-avatar">
+              <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-queen"} />
+            </span>
+            <div className="settings-partner-info">
+              <strong>{connected ? (partnerProfile?.nickname?.trim() || "파트너") : "파트너 없음"}</strong>
+              {connected ? (
+                <em className="connected"><i />연결됨</em>
+              ) : (
+                <em className="disconnected">미연결</em>
+              )}
+            </div>
+            {connected ? (
+              <button className="settings-connected-chip" type="button" disabled>✓ 연결됨</button>
+            ) : (
+              <button className="settings-connect-chip" type="button" onClick={onConnectPartner}>연결하기</button>
+            )}
+          </div>
+          <div className="settings-card-divider" />
+          <div className="settings-inline-row">
+            <span className="settings-row-icon warn"><AssetImage src={commonWarning} alt="" /></span>
+            <div>
+              <strong>파트너 연결 해제</strong>
+              <span>연결을 끊으면 데이터가 분리돼요</span>
+            </div>
+            <button className="settings-danger-text" type="button" onClick={openDisconnectConfirm}>
+              해제
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>집안일 관리</h2>
+        <div className="settings-card">
+          <button className="settings-inline-row link" type="button" onClick={onManageTasks}>
+            <span className="settings-row-icon peach"><AssetImage src={taskCooking} alt="" /></span>
+            <div>
+              <strong>이번 주 할 일 수정</strong>
+              <span>추가·삭제·재배정</span>
+            </div>
+            <em className="settings-chevron">›</em>
+          </button>
+          <div className="settings-card-divider" />
+          <div className="settings-inline-row">
+            <span className="settings-row-icon pink"><AssetImage src={commonRefresh} alt="" /></span>
+            <div>
+              <strong>할 일 자동 반복</strong>
+              <span>매주 자동으로 같은 목록 사용</span>
+            </div>
+            <button
+              aria-pressed={autoRepeat}
+              className={autoRepeat ? "settings-toggle on" : "settings-toggle"}
+              type="button"
+              onClick={() => setAutoRepeat((value) => !value)}
+            >
+              <i />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>알림 설정</h2>
+        <div className="settings-card">
+          {[
+            {
+              key: "partner",
+              icon: taskPlant,
+              tone: "mint",
+              title: "파트너 완료 알림",
+              desc: "파트너가 할 일을 완료하면 알려줘요",
+              value: notifPartnerDone,
+              onToggle: () => setNotifPartnerDone((value) => !value),
+            },
+            {
+              key: "letter",
+              icon: reactionLetter,
+              tone: "peach",
+              title: "편지·반응 알림",
+              desc: "편지와 리액션이 오면 알려줘요",
+              value: notifLetter,
+              onToggle: () => setNotifLetter((value) => !value),
+            },
+            {
+              key: "progress",
+              icon: commonAlarm,
+              tone: "lavender",
+              title: "진행률 알림",
+              desc: "주간 진행 상황을 알려줘요",
+              value: notifProgress,
+              onToggle: () => setNotifProgress((value) => !value),
+            },
+            {
+              key: "weekly",
+              icon: commonStatistics,
+              tone: "sky",
+              title: "주간 리포트",
+              desc: "주간 리포트가 준비되면 알려줘요",
+              value: notifWeekly,
+              onToggle: () => setNotifWeekly((value) => !value),
+            },
+          ].map((item, index, list) => (
+            <div key={item.key}>
+              {index > 0 && <div className="settings-card-divider" />}
+              <div className="settings-inline-row">
+                <span className={`settings-row-icon ${item.tone}`}><AssetImage src={item.icon} alt="" /></span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.desc}</span>
+                </div>
+                <button
+                  aria-pressed={item.value}
+                  className={item.value ? "settings-toggle on" : "settings-toggle"}
+                  type="button"
+                  onClick={item.onToggle}
+                >
+                  <i />
+                </button>
+              </div>
+              {index === list.length - 1 && !notificationEnabled && (
+                <p className="settings-note">기기 알림이 꺼져 있으면 푸시가 도착하지 않을 수 있어요.</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>앱 정보 및 개인정보</h2>
+        <div className="settings-card">
+          {[
+            { icon: commonDocument, title: "서비스 이용약관" },
+            { icon: commonShield, title: "개인정보 처리방침" },
+            { icon: commonInfo, title: "개인정보 수집 및 이용 동의" },
+          ].map((item, index) => (
+            <div key={item.title}>
+              {index > 0 && <div className="settings-card-divider" />}
+              <button
+                className="settings-inline-row link"
+                type="button"
+                onClick={() => showAlert("알림", "준비 중이에요.")}
+              >
+                <span className="settings-row-icon soft"><AssetImage src={item.icon} alt="" /></span>
+                <div>
+                  <strong>{item.title}</strong>
+                </div>
+                <em className="settings-chevron">›</em>
+              </button>
+            </div>
+          ))}
+          <div className="settings-card-divider" />
+          <div className="settings-inline-row">
+            <span className="settings-row-icon soft"><AssetImage src={commonInfo} alt="" /></span>
+            <div>
+              <strong>앱 버전</strong>
+              <span>v1.0.0</span>
+            </div>
+            <em className="settings-version-badge">최신 버전</em>
+          </div>
+          <div className="settings-card-divider" />
+          <button
+            className="settings-inline-row link"
+            type="button"
+            onClick={() => showAlert("알림", "준비 중이에요.")}
+          >
+            <span className="settings-row-icon soft"><AssetImage src={commonChat} alt="" /></span>
+            <div>
+              <strong>문의하기 / 피드백</strong>
+            </div>
+            <em className="settings-chevron">›</em>
+          </button>
+        </div>
+      </section>
+
+      <div className="settings-account">
+        <button className="settings-logout" type="button" onClick={onLogout}>로그아웃</button>
+        <button
+          className="settings-withdraw"
+          type="button"
+          onClick={() => showAlert("알림", "회원 탈퇴 기능은 준비 중이에요.")}
+        >
+          회원 탈퇴
+        </button>
       </div>
     </div>
   );
 }
 
-function ProfileEditScreen({
+function ProfileEditSheet({
   nickname,
   selectedEmoji,
-  onNicknameChange,
-  onEmojiChange,
+  onClose,
   onSave,
-  onBack,
 }: {
   nickname: string;
   selectedEmoji: string;
-  onNicknameChange: (value: string) => void;
-  onEmojiChange: (value: string) => void;
-  onSave: () => void;
-  onBack: () => void;
+  onClose: () => void;
+  onSave: (nickname: string, emoji: string) => void;
 }) {
+  const [tab, setTab] = useState<"nickname" | "emoji">("nickname");
+  const [draftNickname, setDraftNickname] = useState(nickname.slice(0, 10));
+  const [draftEmoji, setDraftEmoji] = useState(
+    avatarOptions.some((item) => item.id === selectedEmoji)
+      ? selectedEmoji
+      : avatarOptions[0].id,
+  );
+  const previewAvatar = avatarOptions.find((item) => item.id === draftEmoji) ?? avatarOptions[0];
+  const previewName = draftNickname.trim() || "닉네임";
+
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header eyebrow="프로필 수정" title="내 정보를 바꿔요" />
-      <label className="field">
-        <span>닉네임</span>
-        <input value={nickname} maxLength={10} onChange={(event) => onNicknameChange(event.target.value)} />
-      </label>
-      <div className="emoji-grid">
-        {avatarOptions.map((avatar) => (
+    <div
+      className="bottom-sheet-overlay"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="bottom-sheet profile-edit-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="내 정보 수정"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="profile-edit-handle" aria-hidden />
+
+        <div className="profile-edit-tabs" role="tablist">
           <button
-            aria-label={avatar.label}
-            className={avatar.id === selectedEmoji ? "emoji-choice selected" : "emoji-choice"}
-            key={avatar.id}
-            onClick={() => onEmojiChange(avatar.id)}
+            role="tab"
+            aria-selected={tab === "nickname"}
+            className={tab === "nickname" ? "active" : ""}
+            type="button"
+            onClick={() => setTab("nickname")}
           >
-            <AssetImage src={avatar.src} alt="" />
+            닉네임 변경
           </button>
-        ))}
+          <button
+            role="tab"
+            aria-selected={tab === "emoji"}
+            className={tab === "emoji" ? "active" : ""}
+            type="button"
+            onClick={() => setTab("emoji")}
+          >
+            이모지 변경
+          </button>
+        </div>
+
+        <div className="profile-edit-preview">
+          <span className="profile-edit-preview-label">미리보기</span>
+          <div className="profile-edit-preview-card">
+            <span className="profile-edit-preview-avatar">
+              <AssetImage src={previewAvatar.src} alt="" />
+            </span>
+            <strong>{previewName}</strong>
+          </div>
+        </div>
+
+        {tab === "nickname" ? (
+          <label className="profile-edit-field">
+            <span>새 닉네임</span>
+            <div className="profile-edit-input-wrap">
+              <input
+                value={draftNickname}
+                maxLength={10}
+                placeholder="닉네임을 입력해주세요"
+                onChange={(event) => setDraftNickname(event.target.value.slice(0, 10))}
+              />
+              <em>{draftNickname.length}/10</em>
+            </div>
+          </label>
+        ) : (
+          <div className="profile-edit-emoji-block">
+            <h3>나를 표현할 이모지를 골라요</h3>
+            <div className="profile-edit-emoji-grid">
+              {avatarOptions.map((avatar) => (
+                <button
+                  aria-label={avatar.label}
+                  aria-pressed={avatar.id === draftEmoji}
+                  className={avatar.id === draftEmoji ? "selected" : ""}
+                  key={avatar.id}
+                  type="button"
+                  onClick={() => setDraftEmoji(avatar.id)}
+                >
+                  <AssetImage src={avatar.src} alt="" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button
+          className="profile-edit-save"
+          type="button"
+          onClick={() => onSave(draftNickname, draftEmoji)}
+        >
+          저장하기
+        </button>
       </div>
-      <button className="primary-button sticky-bottom" onClick={onSave}>저장하기</button>
     </div>
   );
+}
+
+function formatNotificationTime(createdAt: string) {
+  const date = new Date(createdAt);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startYesterday = new Date(startToday);
+  startYesterday.setDate(startToday.getDate() - 1);
+
+  const hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const period = hours < 12 ? "오전" : "오후";
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  const time = `${period} ${hour12}:${minutes}`;
+
+  if (date >= startToday) return `오늘 ${time}`;
+  if (date >= startYesterday) return `어제 ${time}`;
+  return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
 }
 
 function NotificationsScreen({
   notifications,
   onBack,
+  onMarkAll,
   onOpen,
 }: {
   notifications: AppNotification[];
   onBack: () => void;
-  onOpen: (id: string) => void;
+  onMarkAll: () => void;
+  onOpen: (item: AppNotification) => void;
 }) {
+  const unreadCount = notifications.filter((item) => !item.read).length;
+  const today = new Date();
+  const todayItems = notifications.filter((item) => isSameDay(new Date(item.createdAt), today));
+  const previousItems = notifications.filter((item) => !isSameDay(new Date(item.createdAt), today));
+
+  const iconFor = (kind: AppNotification["kind"]) => {
+    if (kind === "reminder") return { src: commonAlarm, tone: "purple" as const };
+    if (kind === "chore_done") return { src: commonCheckboxFilled, tone: "green" as const };
+    if (kind === "letter") return { src: reactionLetter, tone: "orange" as const };
+    if (kind === "reaction") return { src: reactionHeartPink, tone: "pink" as const };
+    return { src: commonNotification, tone: "purple" as const };
+  };
+
+  const renderGroup = (label: string, items: AppNotification[]) => {
+    if (items.length === 0) return null;
+    return (
+      <section className="notif-group">
+        <h3>{label}</h3>
+        <ul>
+          {items.map((item) => {
+            const icon = iconFor(item.kind);
+            return (
+              <li key={item.id}>
+                <button
+                  className={item.read ? "notif-card read" : "notif-card"}
+                  type="button"
+                  onClick={() => onOpen(item)}
+                >
+                  {!item.read && <i className="notif-dot" aria-hidden />}
+                  <span className={`notif-icon ${icon.tone}`}>
+                    <AssetImage src={icon.src} alt="" />
+                  </span>
+                  <div>
+                    <strong>{item.body || item.title}</strong>
+                    <em>{formatNotificationTime(item.createdAt)}</em>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    );
+  };
+
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header eyebrow="알림함" title="파트너 소식" />
+    <div className="notif-screen">
+      <header className="notif-header">
+        <button className="notif-back" type="button" onClick={onBack}>{"< 뒤로"}</button>
+        <div className="notif-title-block">
+          <strong>
+            알림
+            <AssetImage src={commonNotification} alt="" />
+          </strong>
+          <span>읽지 않은 알림 {unreadCount}개</span>
+        </div>
+        <button
+          className="notif-mark-all"
+          type="button"
+          disabled={unreadCount === 0}
+          onClick={onMarkAll}
+        >
+          모두 읽음
+        </button>
+      </header>
+
       {notifications.length === 0 ? (
         <EmptyState
           icon={commonNotification}
@@ -2206,18 +4440,9 @@ function NotificationsScreen({
           description="파트너가 집안일을 완료하면 여기에 알림이 도착해요."
         />
       ) : (
-        <div className="notification-list">
-          {notifications.map((item) => (
-            <article
-              className={item.read ? "notification-item read" : "notification-item"}
-              key={item.id}
-              onClick={() => onOpen(item.id)}
-            >
-              <strong>{item.title}</strong>
-              <p>{item.body}</p>
-              <span>{item.date}</span>
-            </article>
-          ))}
+        <div className="notif-list">
+          {renderGroup("오늘", todayItems)}
+          {renderGroup("이전", previousItems)}
         </div>
       )}
     </div>
@@ -2226,95 +4451,271 @@ function NotificationsScreen({
 
 function TemplateManageScreen({
   templates,
+  weekCategories,
+  isSaving,
   onBack,
   onAdd,
   onEdit,
   onDelete,
+  onSave,
 }: {
   templates: AppChoreTemplate[];
+  weekCategories: Set<string>;
+  isSaving: boolean;
   onBack: () => void;
-  onAdd: () => void;
+  onAdd: (category: string) => void;
   onEdit: (template: AppChoreTemplate) => void;
-  onDelete: (id: string) => void;
+  onDelete: (template: AppChoreTemplate) => void;
+  onSave: () => void;
 }) {
-  const grouped = templates.reduce<Record<string, AppChoreTemplate[]>>((acc, template) => {
-    acc[template.category] = [...(acc[template.category] ?? []), template];
-    return acc;
-  }, {});
+  const grouped = useMemo(() => {
+    return templates.reduce<Record<string, AppChoreTemplate[]>>((acc, template) => {
+      const category = normalizeCategory(template.category);
+      acc[category] = [...(acc[category] ?? []), template];
+      return acc;
+    }, {});
+  }, [templates]);
+
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const item of categoryMeta) {
+      if (item.category === "기타") continue;
+      const hasItems = templates.some((template) => normalizeCategory(template.category) === item.category);
+      initial[item.category] = hasItems && weekCategories.has(item.category);
+    }
+    return initial;
+  });
+
+  const categories = categoryMeta.filter((item) => item.category !== "기타");
 
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header eyebrow="할 일 관리" title="자주 하는 집안일 목록" />
-      <p className="helper-text">여기서 관리한 목록이 매주 할 일 선택 화면에 반영돼요.</p>
-      <div className="template-list">
-        {Object.entries(grouped).map(([category, items]) => (
-          <section className="category-card" key={category}>
-            <div className="category-head">
-              <strong>{category}</strong>
-              <span>{items.length}개</span>
-            </div>
-            {items.map((template) => (
-              <div className="template-row" key={template.id}>
-                <div>
-                  {template.iconKey && taskIconMap[template.iconKey] && (
-                    <span className="task-icon"><AssetImage src={taskIconMap[template.iconKey]} alt="" /></span>
-                  )}
-                  {template.title}
+    <div className="template-manage-screen">
+      <header className="template-manage-header">
+        <button className="template-manage-back" type="button" onClick={onBack}>‹ 설정</button>
+        <div>
+          <h1>할 일 목록 관리</h1>
+          <p>할 일 목록 수정/삭제가 가능해요</p>
+        </div>
+      </header>
+
+      <div className="template-manage-list">
+        {categories.map((meta) => {
+          const items = grouped[meta.category] ?? [];
+          const open = expanded[meta.category] ?? false;
+          const icon = taskIconMap[meta.iconKey];
+
+          return (
+            <section className="template-manage-card" key={meta.category}>
+              <button
+                className="template-manage-category"
+                type="button"
+                onClick={() => setExpanded((current) => ({
+                  ...current,
+                  [meta.category]: !open,
+                }))}
+              >
+                <span className="template-manage-category-icon">
+                  <AssetImage src={icon} alt="" />
+                </span>
+                <strong>{meta.category}</strong>
+                <em>{items.length}</em>
+                <span className="template-manage-chevron">{open ? "▲" : "▼"}</span>
+              </button>
+
+              {open && (
+                <div className="template-manage-items">
+                  {items.map((template) => (
+                    <div className="template-manage-row" key={template.id}>
+                      <span>{template.title}</span>
+                      <div className="template-manage-actions">
+                        <button
+                          type="button"
+                          aria-label="수정"
+                          onClick={() => onEdit(template)}
+                        >
+                          <AssetImage src={commonEdit} alt="" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="삭제"
+                          onClick={() => onDelete(template)}
+                        >
+                          <AssetImage src={commonDelete} alt="" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    className="template-manage-add"
+                    type="button"
+                    onClick={() => onAdd(meta.category)}
+                  >
+                    + 추가하기
+                  </button>
                 </div>
-                <div className="template-actions">
-                  <button onClick={() => onEdit(template)}>수정</button>
-                  <button onClick={() => onDelete(template.id)}>삭제</button>
-                </div>
-              </div>
-            ))}
-          </section>
-        ))}
+              )}
+            </section>
+          );
+        })}
       </div>
-      <button className="primary-button sticky-bottom" onClick={onAdd}>할 일 추가</button>
+
+      <button
+        className="template-manage-save"
+        type="button"
+        disabled={isSaving}
+        onClick={onSave}
+      >
+        {isSaving ? "저장 중..." : "저장하기"}
+      </button>
     </div>
   );
 }
 
-function TemplateEditScreen({
-  draft,
-  categories,
-  isEditing,
-  onDraftChange,
-  onSave,
-  onBack,
+function TemplateAddSheet({
+  value,
+  onChange,
+  onClose,
+  onSubmit,
 }: {
-  draft: { title: string; category: string };
-  categories: string[];
-  isEditing: boolean;
-  onDraftChange: (value: { title: string; category: string }) => void;
-  onSave: () => void;
-  onBack: () => void;
+  value: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
 }) {
   return (
-    <div className="stack-screen">
-      <button className="icon-button" onClick={onBack}>‹</button>
-      <Header eyebrow="할 일 관리" title={isEditing ? "할 일 수정" : "할 일 추가"} />
-      <label className="field">
-        <span>할 일 이름</span>
-        <input
-          value={draft.title}
-          maxLength={30}
-          onChange={(event) => onDraftChange({ ...draft, title: event.target.value })}
-        />
-      </label>
-      <label className="field">
-        <span>카테고리</span>
-        <select
-          value={draft.category}
-          onChange={(event) => onDraftChange({ ...draft, category: event.target.value })}
-        >
-          {categories.map((category) => (
-            <option key={category} value={category}>{category}</option>
-          ))}
-        </select>
-      </label>
-      <button className="primary-button sticky-bottom" onClick={onSave}>저장하기</button>
+    <div className="bottom-sheet-overlay no-dismiss" role="presentation">
+      <div
+        className="bottom-sheet template-add-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-add-title"
+      >
+        <div className="profile-edit-handle" aria-hidden />
+        <div className="bottom-sheet-header">
+          <h2 id="template-add-title">할 일 추가</h2>
+          <button className="bottom-sheet-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+        </div>
+
+        <label className="bottom-sheet-field">
+          <span>새 이름</span>
+          <div className="bottom-sheet-input-wrap">
+            <input
+              autoFocus
+              value={value}
+              maxLength={30}
+              placeholder="할 일을 입력하세요"
+              onChange={(event) => onChange(event.target.value.slice(0, 30))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onSubmit();
+              }}
+            />
+            <em>{value.length}/30</em>
+          </div>
+        </label>
+
+        <button className="start-primary" type="button" onClick={onSubmit}>
+          추가하기
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TemplateEditSheet({
+  originalTitle,
+  value,
+  onChange,
+  onClose,
+  onSubmit,
+}: {
+  originalTitle: string;
+  value: string;
+  onChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="bottom-sheet-overlay no-dismiss" role="presentation">
+      <div
+        className="bottom-sheet template-edit-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-edit-title"
+      >
+        <div className="profile-edit-handle" aria-hidden />
+        <div className="bottom-sheet-header">
+          <h2 id="template-edit-title">할 일 수정</h2>
+          <button className="bottom-sheet-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
+        </div>
+
+        <label className="bottom-sheet-field">
+          <span>기존 이름</span>
+          <div className="template-edit-old-name" aria-readonly="true">
+            <s>{originalTitle}</s>
+          </div>
+        </label>
+
+        <label className="bottom-sheet-field">
+          <span>새 이름</span>
+          <div className="bottom-sheet-input-wrap">
+            <input
+              autoFocus
+              value={value}
+              maxLength={30}
+              placeholder="할 일명을 입력해주세요"
+              onChange={(event) => onChange(event.target.value.slice(0, 30))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onSubmit();
+              }}
+            />
+            <em>{value.length}/30</em>
+          </div>
+        </label>
+
+        <button className="start-primary" type="button" onClick={onSubmit}>
+          수정완료
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TemplateDeleteSheet({
+  title,
+  category,
+  onClose,
+  onConfirm,
+}: {
+  title: string;
+  category: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const iconKey = iconKeyForCategory(category);
+  const icon = taskIconMap[iconKey];
+
+  return (
+    <div className="bottom-sheet-overlay no-dismiss" role="presentation">
+      <div
+        className="bottom-sheet template-delete-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-delete-title"
+      >
+        <div className="profile-edit-handle" aria-hidden />
+        <span className="template-delete-icon">
+          <AssetImage src={icon} alt="" />
+        </span>
+        <h2 id="template-delete-title">할 일을 삭제할까요?</h2>
+        <div className="template-delete-target">“{title}”</div>
+        <p className="template-delete-guide">
+          삭제하면 이번 주 목록에서 제거되고 복구할 수 없어요.
+        </p>
+        <div className="template-delete-actions">
+          <button type="button" className="template-delete-cancel" onClick={onClose}>취소</button>
+          <button type="button" className="template-delete-confirm" onClick={onConfirm}>삭제하기</button>
+        </div>
+      </div>
     </div>
   );
 }
