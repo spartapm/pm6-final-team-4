@@ -960,3 +960,256 @@ h3 {
     border-radius: 0;
   }
 }
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(36, 27, 47, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.modal-overlay .modal-card {
+  width: min(100%, 320px);
+  padding: 22px 18px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.invite-code-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.invite-code-display strong {
+  font-size: 22px;
+  letter-spacing: 0.08em;
+}
+
+.copy-button img {
+  width: 18px;
+  height: 18px;
+}
+
+.notification-button {
+  position: relative;
+}
+
+.notification-button .badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ff5c93;
+  color: white;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+}
+
+.task-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.task-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.task-edit-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.deselect-all-button {
+  align-self: flex-start;
+  margin-bottom: 4px;
+}
+
+.stats-screen.complete {
+  background: linear-gradient(180deg, rgba(255, 228, 242, 0.55), transparent 220px);
+}
+
+.stats-screen.incomplete .celebration-text {
+  display: none;
+}
+
+.streak-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(90deg, #ffd2e9, #f2eaff);
+  color: #7b4aa8;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.celebration-text {
+  margin: -4px 0 8px;
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.contribution-section {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: white;
+}
+
+.contribution-section h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.contribution-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.contribution-bar span {
+  background: linear-gradient(90deg, #b794ff, #8b5cf6);
+}
+
+.contribution-bar.letter span {
+  background: linear-gradient(90deg, #ffb4d5, #ff7eb3);
+}
+
+.notification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-item {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: white;
+  cursor: pointer;
+}
+
+.notification-item.read {
+  opacity: 0.65;
+}
+
+.notification-item strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.notification-item p {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notification-item span {
+  color: var(--soft-muted);
+  font-size: 11px;
+}
+
+.template-list {
+  display: grid;
+  gap: 12px;
+}
+
+.template-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.template-row:first-of-type {
+  border-top: 0;
+}
+
+.template-row div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.template-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.template-actions button {
+  border: 0;
+  border-radius: 10px;
+  background: var(--purple-soft);
+  color: var(--primary-dark);
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.letter-card.clickable {
+  cursor: pointer;
+}
+
+.letter-detail-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: white;
+}
+
+.letter-detail-card .letter-reaction {
+  font-size: 28px;
+}
+
+.letter-detail-card h3 {
+  margin: 8px 0;
+}
+
+.letter-detail-card p {
+  margin: 0;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.castle-explain-link {
+  align-self: flex-start;
+  margin-top: -4px;
+}
+
+.settings-row {
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: white;
+}

@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { buildCatalogTasks, TaskIconKey } from "@/lib/chore-catalog";
 
 export type Assignee = "me" | "partner" | "none";
 
@@ -6,6 +7,7 @@ export type AppTask = {
   id: string;
   title: string;
   category: string;
+  iconKey?: TaskIconKey;
   assignee: Assignee;
   selected: boolean;
   done: boolean;
@@ -21,10 +23,19 @@ export type AppLetter = {
   reaction: string;
 };
 
-export type Couple = {
+export type AppNotification = {
   id: string;
-  user_a_id: string;
-  user_b_id: string | null;
+  title: string;
+  body: string;
+  read: boolean;
+  date: string;
+};
+
+export type AppChoreTemplate = {
+  id: string;
+  title: string;
+  category: string;
+  iconKey?: TaskIconKey;
 };
 
 export type AppWeeklyStat = {
@@ -32,6 +43,18 @@ export type AppWeeklyStat = {
   completionRate: number;
   weekStart: string;
   weekEnd: string;
+};
+
+export type AppPartnerProfile = {
+  userId: string;
+  nickname: string;
+  avatarEmoji: string;
+};
+
+export type Couple = {
+  id: string;
+  user_a_id: string;
+  user_b_id: string | null;
 };
 
 type ProfileRow = {
@@ -64,18 +87,43 @@ type LetterRow = {
   body: string;
   reaction: string | null;
   created_at: string;
+  kind?: "instant" | "weekly";
 };
 
-export const defaultTasks: AppTask[] = [
-  { id: "seed-1", title: "바닥 청소", category: "청소", assignee: "me", selected: true, done: false, reacted: false },
-  { id: "seed-2", title: "분리수거 하기", category: "청소", assignee: "partner", selected: true, done: false, reacted: false },
-  { id: "seed-3", title: "화장실 청소", category: "청소", assignee: "me", selected: true, done: false, reacted: false },
-  { id: "seed-4", title: "장보기", category: "생활", assignee: "partner", selected: true, done: false, reacted: false },
-  { id: "seed-5", title: "침구 정리", category: "정리정돈", assignee: "none", selected: true, done: false, reacted: false },
-  { id: "seed-6", title: "식물 물 주기", category: "생활", assignee: "partner", selected: true, done: false, reacted: false },
-];
+type NotificationRow = {
+  id: string;
+  title: string;
+  body: string;
+  read_at: string | null;
+  created_at: string;
+};
+
+type ChoreTemplateRow = {
+  id: string;
+  title: string;
+  category: string;
+};
+
+export const defaultTasks: AppTask[] = buildCatalogTasks();
 
 export const isPersistedId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
+function iconKeyForCategory(category: string): TaskIconKey | undefined {
+  return defaultTasks.find((task) => task.category === category)?.iconKey;
+}
+
+function mapChoreRow(task: WeeklyChoreRow): AppTask {
+  return {
+    id: task.id,
+    title: task.title,
+    category: task.category,
+    iconKey: iconKeyForCategory(task.category),
+    assignee: task.assignee,
+    selected: true,
+    done: Boolean(task.completed_at),
+    reacted: Boolean(task.chore_reactions?.length),
+  };
+}
 
 export async function ensureProfile(userId: string, nickname: string, avatarEmoji: string) {
   const { error } = await supabase.from("profiles").upsert({
@@ -97,6 +145,17 @@ export async function getProfile(userId: string) {
 
   if (error) throw error;
   return data;
+}
+
+export async function getPartnerProfile(userId: string | null): Promise<AppPartnerProfile | null> {
+  if (!userId) return null;
+  const profile = await getProfile(userId);
+  if (!profile) return null;
+  return {
+    userId: profile.user_id,
+    nickname: profile.nickname,
+    avatarEmoji: profile.avatar_emoji,
+  };
 }
 
 export async function getCurrentCouple() {
@@ -155,6 +214,14 @@ export async function getActiveInviteCode(userId: string) {
   return data?.code ?? "";
 }
 
+export function parseInviteError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("invalid_invite_code")) return "올바르지 않은 초대 코드예요.";
+  if (message.includes("already_connected")) return "이미 연결된 코드예요.";
+  if (message.includes("cannot_use_own_invite_code")) return "내 코드는 직접 사용할 수 없어요.";
+  return "초대 코드 처리에 실패했어요. 다시 시도해 주세요.";
+}
+
 export async function redeemInviteCode(code: string) {
   const { data, error } = await supabase.rpc("redeem_invite_code", {
     p_code: code,
@@ -164,12 +231,12 @@ export async function redeemInviteCode(code: string) {
   return data as string;
 }
 
-export function currentWeekRange() {
+export function currentWeekRange(offsetWeeks = 0) {
   const today = new Date();
   const day = today.getDay();
   const diffToMonday = day === 0 ? -6 : 1 - day;
   const start = new Date(today);
-  start.setDate(today.getDate() + diffToMonday);
+  start.setDate(today.getDate() + diffToMonday + offsetWeeks * 7);
   start.setHours(0, 0, 0, 0);
 
   const end = new Date(start);
@@ -200,6 +267,12 @@ export async function ensureCurrentCycle(coupleId: string) {
   return data.id;
 }
 
+export async function coupleHasWeeklyChores(coupleId: string) {
+  const cycleId = await ensureCurrentCycle(coupleId);
+  const chores = await loadWeeklyChores(cycleId);
+  return chores.length > 0;
+}
+
 export async function loadWeeklyChores(cycleId: string): Promise<AppTask[]> {
   const { data, error } = await supabase
     .from("weekly_chores")
@@ -209,15 +282,26 @@ export async function loadWeeklyChores(cycleId: string): Promise<AppTask[]> {
     .returns<WeeklyChoreRow[]>();
 
   if (error) throw error;
+  return data.map(mapChoreRow);
+}
 
-  return data.map((task) => ({
-    id: task.id,
-    title: task.title,
-    category: task.category,
-    assignee: task.assignee,
+export async function loadPreviousCycleChores(coupleId: string): Promise<AppTask[]> {
+  const { weekStart } = currentWeekRange(-1);
+  const { data, error } = await supabase
+    .from("weekly_cycles")
+    .select("id,weekly_chores(id,title,category,assignee,completed_at,chore_reactions(id))")
+    .eq("couple_id", coupleId)
+    .eq("week_start", weekStart)
+    .maybeSingle<{ id: string; weekly_chores: WeeklyChoreRow[] | null }>();
+
+  if (error) throw error;
+  if (!data?.weekly_chores?.length) return [];
+
+  return data.weekly_chores.map((task) => ({
+    ...mapChoreRow(task),
     selected: true,
-    done: Boolean(task.completed_at),
-    reacted: Boolean(task.chore_reactions?.length),
+    done: false,
+    reacted: false,
   }));
 }
 
@@ -246,23 +330,20 @@ export async function replaceWeeklyChores(cycleId: string, userId: string, tasks
   if (error) throw error;
 
   return data.map((task) => ({
-    id: task.id,
-    title: task.title,
-    category: task.category,
-    assignee: task.assignee,
+    ...mapChoreRow(task),
     selected: true,
-    done: Boolean(task.completed_at),
+    done: false,
     reacted: false,
   }));
 }
 
-export async function insertWeeklyChore(cycleId: string, title: string): Promise<AppTask> {
+export async function insertWeeklyChore(cycleId: string, title: string, category = "추가한 일"): Promise<AppTask> {
   const { data, error } = await supabase
     .from("weekly_chores")
     .insert({
       cycle_id: cycleId,
       title,
-      category: "추가한 일",
+      category,
       assignee: "none",
     })
     .select("id,title,category,assignee,completed_at")
@@ -271,10 +352,7 @@ export async function insertWeeklyChore(cycleId: string, title: string): Promise
   if (error) throw error;
 
   return {
-    id: data.id,
-    title: data.title,
-    category: data.category,
-    assignee: data.assignee,
+    ...mapChoreRow(data),
     selected: true,
     done: false,
     reacted: false,
@@ -306,6 +384,56 @@ export async function addChoreReaction(taskId: string, userId: string, reaction:
   if (error) throw error;
 }
 
+export async function createNotification({
+  userId,
+  choreId,
+  title,
+  body,
+}: {
+  userId: string;
+  choreId?: string;
+  title: string;
+  body: string;
+}) {
+  const { error } = await supabase.from("notifications").insert({
+    user_id: userId,
+    chore_id: choreId ?? null,
+    title,
+    body,
+  });
+
+  if (error) throw error;
+}
+
+export async function loadNotifications(userId: string): Promise<AppNotification[]> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("id,title,body,read_at,created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(30)
+    .returns<NotificationRow[]>();
+
+  if (error) throw error;
+
+  return data.map((row) => ({
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    read: Boolean(row.read_at),
+    date: new Date(row.created_at).toLocaleDateString("ko-KR"),
+  }));
+}
+
+export async function markNotificationRead(notificationId: string) {
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read_at: new Date().toISOString() })
+    .eq("id", notificationId);
+
+  if (error) throw error;
+}
+
 export async function loadLetters(userId: string): Promise<AppLetter[]> {
   const { data, error } = await supabase
     .from("letters")
@@ -326,6 +454,22 @@ export async function loadLetters(userId: string): Promise<AppLetter[]> {
   }));
 }
 
+export async function getWeeklyLetterStatus(cycleId: string, userId: string, partnerId: string | null) {
+  const { data, error } = await supabase
+    .from("letters")
+    .select("sender_id,kind")
+    .eq("cycle_id", cycleId)
+    .eq("kind", "weekly")
+    .returns<{ sender_id: string; kind: string }[]>();
+
+  if (error) throw error;
+
+  const meSent = data.some((letter) => letter.sender_id === userId);
+  const partnerSent = partnerId ? data.some((letter) => letter.sender_id === partnerId) : false;
+
+  return { meSent, partnerSent, bothSent: meSent && partnerSent };
+}
+
 export async function loadWeeklyStats(coupleId: string): Promise<AppWeeklyStat[]> {
   const { data, error } = await supabase
     .from("weekly_stats")
@@ -343,6 +487,16 @@ export async function loadWeeklyStats(coupleId: string): Promise<AppWeeklyStat[]
     weekStart: row.weekly_cycles?.week_start ?? "",
     weekEnd: row.weekly_cycles?.week_end ?? "",
   }));
+}
+
+export async function countCompletedWeekStreak(coupleId: string) {
+  const stats = await loadWeeklyStats(coupleId);
+  let streak = 0;
+  for (const stat of stats) {
+    if (stat.completionRate >= 100) streak += 1;
+    else break;
+  }
+  return streak;
 }
 
 export async function insertLetter({
@@ -408,4 +562,131 @@ export async function upsertWeeklyStats({
   });
 
   if (error) throw error;
+}
+
+export async function closeWeeklyCycle(cycleId: string) {
+  const { error } = await supabase
+    .from("weekly_cycles")
+    .update({ closed_at: new Date().toISOString() })
+    .eq("id", cycleId);
+
+  if (error) throw error;
+}
+
+export async function startNextWeekCycle(coupleId: string, tasks: AppTask[]) {
+  const { weekStart, weekEnd } = currentWeekRange(1);
+  const { data, error } = await supabase
+    .from("weekly_cycles")
+    .upsert(
+      {
+        couple_id: coupleId,
+        week_start: weekStart,
+        week_end: weekEnd,
+      },
+      { onConflict: "couple_id,week_start" },
+    )
+    .select("id")
+    .single<{ id: string }>();
+
+  if (error) throw error;
+
+  const nextTasks = tasks.map((task) => ({
+    ...task,
+    selected: true,
+    done: false,
+    reacted: false,
+  }));
+
+  const savedTasks = await replaceWeeklyChores(data.id, "", nextTasks);
+  return { cycleId: data.id, tasks: savedTasks };
+}
+
+export async function loadChoreTemplates(userId: string): Promise<AppChoreTemplate[]> {
+  const { data, error } = await supabase
+    .from("chore_templates")
+    .select("id,title,category")
+    .eq("owner_id", userId)
+    .order("created_at", { ascending: true })
+    .returns<ChoreTemplateRow[]>();
+
+  if (error) throw error;
+
+  return data.map((row) => ({
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    iconKey: iconKeyForCategory(row.category),
+  }));
+}
+
+export async function createChoreTemplate(userId: string, title: string, category: string) {
+  const { data, error } = await supabase
+    .from("chore_templates")
+    .insert({ owner_id: userId, title, category })
+    .select("id,title,category")
+    .single<ChoreTemplateRow>();
+
+  if (error) throw error;
+
+  return {
+    id: data.id,
+    title: data.title,
+    category: data.category,
+    iconKey: iconKeyForCategory(data.category),
+  };
+}
+
+export async function updateChoreTemplate(templateId: string, title: string, category: string) {
+  const { error } = await supabase
+    .from("chore_templates")
+    .update({ title, category })
+    .eq("id", templateId);
+
+  if (error) throw error;
+}
+
+export async function deleteChoreTemplate(templateId: string) {
+  const { error } = await supabase.from("chore_templates").delete().eq("id", templateId);
+  if (error) throw error;
+}
+
+export async function seedDefaultTemplates(userId: string) {
+  const existing = await loadChoreTemplates(userId);
+  if (existing.length > 0) return existing;
+
+  const rows = defaultTasks.map((task) => ({
+    owner_id: userId,
+    title: task.title,
+    category: task.category,
+  }));
+
+  const { data, error } = await supabase
+    .from("chore_templates")
+    .insert(rows)
+    .select("id,title,category")
+    .returns<ChoreTemplateRow[]>();
+
+  if (error) throw error;
+
+  return data.map((row) => ({
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    iconKey: iconKeyForCategory(row.category),
+  }));
+}
+
+export function mergeTemplatesIntoCatalog(templates: AppChoreTemplate[]): AppTask[] {
+  if (templates.length === 0) return defaultTasks;
+
+  return templates.map((template) => ({
+    id: template.id,
+    title: template.title,
+    category: template.category,
+    iconKey: template.iconKey ?? iconKeyForCategory(template.category),
+    assignee: "none" as const,
+    selected: false,
+    done: false,
+    reacted: false,
+  }));
 }
