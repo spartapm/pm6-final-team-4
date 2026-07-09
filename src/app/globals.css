@@ -251,8 +251,7 @@ h3 {
 .secondary-button,
 .ghost-button,
 .text-button,
-.kakao-button,
-.google-button {
+.kakao-button {
   border: 0;
   border-radius: var(--radius-md);
   min-height: 52px;
@@ -446,18 +445,7 @@ h3 {
   color: #2b2010;
 }
 
-.google-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: white;
-  color: #312a35;
-  border: 1px solid var(--line);
-}
-
-.kakao-button img,
-.google-button img {
+.kakao-button img {
   width: 24px;
   height: 24px;
   object-fit: contain;

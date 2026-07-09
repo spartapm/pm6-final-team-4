@@ -44,7 +44,6 @@ import reactionLetter from "../../icons/reaction-letter.svg";
 import reactionLike from "../../icons/reaction-like.svg";
 import reactionSparkle from "../../icons/reaction-sparkle.svg";
 import reactionStar from "../../icons/reaction-star.svg";
-import snsGoogle from "../../icons/sns-google.svg";
 import snsKakao from "../../icons/sns-kakao.svg";
 import { AlertDialog, ConfirmDialog, ModalOverlay } from "@/components/modals";
 import { categoryCatalog, taskIconMap } from "@/lib/chore-catalog";
@@ -133,7 +132,6 @@ type DialogState =
   | null;
 
 type Assignee = "me" | "partner" | "none";
-type SocialProvider = "kakao" | "google";
 type AssetModule = string | StaticImageData;
 
 const avatarOptions = [
@@ -469,23 +467,19 @@ export default function Home() {
 
   const goHome = () => setScreen("home");
 
-  const handleSocialLogin = async (provider: SocialProvider, mode: "social" | "login") => {
+  const handleSocialLogin = async (mode: "social" | "login") => {
     window.localStorage.setItem("moaseong-auth-intent", mode === "social" ? "signup" : "login");
     setIsLoggingIn(true);
     const kakaoScopes = "profile_nickname profile_image";
 
     const { error } = await supabase.auth.signInWithOAuth({
-      provider,
+      provider: "kakao",
       options: {
         redirectTo: window.location.origin,
-        ...(provider === "kakao"
-          ? {
-              scopes: kakaoScopes,
-              queryParams: {
-                scope: kakaoScopes,
-              },
-            }
-          : {}),
+        scopes: kakaoScopes,
+        queryParams: {
+          scope: kakaoScopes,
+        },
       },
     });
 
@@ -909,7 +903,7 @@ export default function Home() {
             mode={screen}
             isLoggingIn={isLoggingIn}
             onBack={() => setScreen(screen === "social" ? "profile" : "landing")}
-            onLogin={(provider) => handleSocialLogin(provider, screen)}
+            onLogin={() => handleSocialLogin(screen)}
           />
         );
       case "invite":
@@ -1260,7 +1254,7 @@ function SocialScreen({
   mode: "social" | "login";
   isLoggingIn: boolean;
   onBack: () => void;
-  onLogin: (provider: SocialProvider) => void;
+  onLogin: () => void;
 }) {
   return (
     <div className="stack-screen">
@@ -1270,8 +1264,7 @@ function SocialScreen({
         title={mode === "social" ? "계정을 연결하면 기록이 안전하게 저장돼요" : "다시 만나서 반가워요"}
       />
       <div className="social-card">
-        <button className="kakao-button" disabled={isLoggingIn} onClick={() => onLogin("kakao")}><AssetImage src={snsKakao} alt="" />{isLoggingIn ? "연결 중..." : "카카오로 계속하기"}</button>
-        <button className="google-button" disabled={isLoggingIn} onClick={() => onLogin("google")}><AssetImage src={snsGoogle} alt="" />{isLoggingIn ? "연결 중..." : "Google로 계속하기"}</button>
+        <button className="kakao-button" disabled={isLoggingIn} onClick={onLogin}><AssetImage src={snsKakao} alt="" />{isLoggingIn ? "연결 중..." : "카카오로 계속하기"}</button>
       </div>
       <p className="helper-text">로그인하면 파트너와 함께 만든 기록이 안전하게 저장돼요.</p>
     </div>
