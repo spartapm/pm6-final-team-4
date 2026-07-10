@@ -335,7 +335,8 @@ export default function Home() {
     setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
   };
 
-  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:${userId}:${weekStart}`;
+  // v2: DB 리셋 후 예전 pending 마감 모달이 다시 뜨지 않도록 키 버전 갱신
+  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:v2:${userId}:${weekStart}`;
 
   const evaluateWeekClosePopup = useCallback(async (userId: string, coupleId: string | null, resolvedPartnerId: string | null = partnerId) => {
     if (!coupleId) {
