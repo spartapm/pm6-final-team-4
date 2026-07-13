@@ -468,15 +468,26 @@ export default function Home() {
     setChoreMode("first");
   };
 
-  const initializeUserData = async (userId: string, profileDraft?: { nickname: string; avatarEmoji: string }) => {
+  // 앱 가입 여부 = profiles 행 존재 여부 (카카오 OAuth만으로는 미가입)
+  const initializeUserData = async (
+    userId: string,
+    profileDraft?: { nickname: string; avatarEmoji: string },
+    options?: { createIfMissing?: boolean },
+  ) => {
     setCurrentUserId(userId);
 
     const existingProfile = await getProfile(userId);
     if (existingProfile) {
       setNickname(existingProfile.nickname);
       setSelectedEmoji(existingProfile.avatar_emoji);
-    } else {
-      await ensureProfile(userId, profileDraft?.nickname?.trim() || nickname.trim() || "모아", profileDraft?.avatarEmoji ?? selectedEmoji);
+    } else if (options?.createIfMissing) {
+      await ensureProfile(
+        userId,
+        profileDraft?.nickname?.trim() || nickname.trim() || "모아",
+        profileDraft?.avatarEmoji ?? selectedEmoji,
+      );
+      if (profileDraft?.nickname?.trim()) setNickname(profileDraft.nickname.trim());
+      if (profileDraft?.avatarEmoji) setSelectedEmoji(profileDraft.avatarEmoji);
     }
 
     const couple = await getCurrentCouple();
@@ -494,16 +505,44 @@ export default function Home() {
 
     const authIntent = window.localStorage.getItem("moaseong-auth-intent");
     const profileDraft = getProfileDraft();
-    window.localStorage.removeItem("moaseong-auth-intent");
-    window.localStorage.removeItem("moaseong-profile-draft");
 
     let savedTaskCount = 0;
 
     try {
-      const initResult = await initializeUserData(userId, profileDraft);
-      savedTaskCount = initResult.savedTaskCount;
+      // 카카오 로그인 성공 ≠ 앱 가입. profiles 유무로만 판별한다.
+      const existingProfile = await getProfile(userId);
+      const isNewUser = !existingProfile;
 
-      if (authIntent === "signup" && !initResult.isNewUser) {
+      // 기존 로그인인데 미가입: 프로필을 만들지 말고 세션을 끊어 신규 가입 경로를 오염시키지 않음
+      if (authIntent === "login" && isNewUser) {
+        window.localStorage.removeItem("moaseong-auth-intent");
+        try {
+          await supabase.auth.signOut({ scope: "local" });
+        } catch {
+          // 세션 정리 실패해도 가입 유도는 진행
+        }
+        setCurrentUserId(null);
+        setCurrentCoupleId(null);
+        setCurrentCycleId(null);
+        setPartnerId(null);
+        setPartnerProfile(null);
+        setScreen("login");
+        showConfirm(
+          "",
+          "가입된 계정이 없어요.\n회원가입 할까요?",
+          () => setScreen("profile"),
+          "네",
+          "아니오",
+        );
+        return;
+      }
+
+      // 회원가입인데 이미 profiles 있음
+      if (authIntent === "signup" && !isNewUser) {
+        window.localStorage.removeItem("moaseong-auth-intent");
+        window.localStorage.removeItem("moaseong-profile-draft");
+        const initResult = await initializeUserData(userId);
+        savedTaskCount = initResult.savedTaskCount;
         setScreen("social");
         showConfirm(
           "",
@@ -515,17 +554,12 @@ export default function Home() {
         return;
       }
 
-      if (authIntent === "login" && initResult.isNewUser) {
-        setScreen("login");
-        showConfirm(
-          "",
-          "가입된 계정이 없어요.\n회원가입 할까요?",
-          () => setScreen("profile"),
-          "네",
-          "아니오",
-        );
-        return;
-      }
+      window.localStorage.removeItem("moaseong-auth-intent");
+      window.localStorage.removeItem("moaseong-profile-draft");
+
+      // 여기 도달한 신규 유저만 profiles 생성 (회원가입 성공 / 세션 복구)
+      const initResult = await initializeUserData(userId, profileDraft, { createIfMissing: isNewUser });
+      savedTaskCount = initResult.savedTaskCount;
 
       if (authIntent === "signup") {
         setInviteEntry("onboarding");
@@ -2303,7 +2337,14 @@ function ProfileScreen({
         <span>이용약관 및 개인정보처리방침에 동의합니다.(필수)</span>
       </label>
 
-      <button className="start-primary profile-start" type="button" onClick={onNext}>시작하기</button>
+      <button
+        className="start-primary profile-start"
+        type="button"
+        disabled={!nickname.trim() || !agreedToTerms}
+        onClick={onNext}
+      >
+        시작하기
+      </button>
     </div>
   );
 }
