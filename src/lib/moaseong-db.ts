@@ -1,5 +1,5 @@
 import { supabase } from "@/lib/supabase";
-import { buildCatalogTasks, iconKeyForCategory, TaskIconKey } from "@/lib/chore-catalog";
+import { buildCatalogTasks, iconKeyForCategory, normalizeCategory, TaskIconKey } from "@/lib/chore-catalog";
 
 export type Assignee = "me" | "partner" | "none";
 
@@ -401,7 +401,7 @@ export async function replaceWeeklyChores(
       selectedTasks.map((task) => ({
         cycle_id: cycleId,
         title: task.title,
-        category: task.category,
+        category: normalizeCategory(task.category),
         assignee: "none" as const,
         completed_by: null,
         completed_at: null,

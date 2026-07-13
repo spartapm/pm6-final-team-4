@@ -203,6 +203,21 @@ function castleStageFromRate(rate: number) {
   return Math.min(10, Math.max(1, Math.floor(rate / 10) || 1));
 }
 
+function calcWeekProgress(
+  doneCount: number,
+  totalCount: number,
+  letterStatus: { meSent: boolean; partnerSent: boolean },
+) {
+  const choreRate = totalCount > 0 ? (doneCount / totalCount) * 80 : 0;
+  const letterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
+  return Math.round(choreRate + letterRate);
+}
+
+function resolveAvatarId(value?: string | null) {
+  if (value && avatarOptions.some((item) => item.id === value)) return value;
+  return "avatar-mint";
+}
+
 const reactionOptions = [
   { value: "💗", src: reactionHeartPink, label: "하트" },
   { value: "💜", src: reactionHeartPurple, label: "퍼플하트" },
@@ -304,9 +319,7 @@ export default function Home() {
   });
 
   const completeCount = tasks.filter((task) => task.done).length;
-  const choreRate = tasks.length > 0 ? (completeCount / tasks.length) * 80 : 0;
-  const letterRate = (weeklyLetterStatus.meSent ? 10 : 0) + (weeklyLetterStatus.partnerSent ? 10 : 0);
-  const progress = Math.round(choreRate + letterRate);
+  const progress = calcWeekProgress(completeCount, tasks.length, weeklyLetterStatus);
   const castleLevel = Math.min(10, Math.max(1, Math.floor(progress / 10)));
   const meDone = tasks.filter((task) => task.done && task.assignee === "me").length;
   const partnerDone = tasks.filter((task) => task.done && task.assignee === "partner").length;
@@ -366,9 +379,7 @@ export default function Home() {
       }
       const weekChores = await loadWeeklyChores(cycleId, userId, resolvedPartnerId);
       const doneCount = weekChores.filter((task) => task.done).length;
-      const choreRate = weekChores.length > 0 ? (doneCount / weekChores.length) * 80 : 0;
-      const letterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
-      setClosingWeekProgress(Math.round(choreRate + letterRate));
+      setClosingWeekProgress(calcWeekProgress(doneCount, weekChores.length, letterStatus));
       setClosingWeekTasks(weekChores);
       setClosingWeekRange(range);
       setShowWeekClosePopup(true);
@@ -406,7 +417,7 @@ export default function Home() {
       ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
       : null;
 
-    const [savedTasks, savedLetters, savedReactions, savedStats, notifs, letterStatus, streak] = await Promise.all([
+    const [savedTasks, savedLetters, savedReactions, savedStats, notifs, letterStatus, streak, seededTemplates] = await Promise.all([
       loadWeeklyChores(cycleId, userId, partner),
       loadLetters(userId),
       loadCoupleReactions(coupleId, userId),
@@ -414,6 +425,7 @@ export default function Home() {
       loadNotifications(userId),
       getWeeklyLetterStatus(cycleId, userId, partner),
       countCompletedWeekStreak(coupleId),
+      seedDefaultTemplates(userId),
     ]);
 
     setCurrentCycleId(cycleId);
@@ -425,6 +437,7 @@ export default function Home() {
     setNotifications(notifs);
     setWeeklyLetterStatus(letterStatus);
     setWeekStreak(streak);
+    setTemplates(seededTemplates);
     if (partner) setPartnerProfile(await getPartnerProfile(partner));
     else setPartnerProfile(null);
 
@@ -873,8 +886,9 @@ export default function Home() {
         setCurrentCycleId(cycleId);
       }
 
-      const created = await insertWeeklyChore(cycleId, nextTitle, category);
-      setTasks((current) => [...current, { ...created, iconKey: iconKeyForCategory(category) }]);
+      const nextCategory = normalizeCategory(category);
+      const created = await insertWeeklyChore(cycleId, nextTitle, nextCategory);
+      setTasks((current) => [...current, { ...created, category: nextCategory, iconKey: iconKeyForCategory(nextCategory) }]);
       setHomeAdding(false);
       setNewTask("");
     } catch {
@@ -1183,7 +1197,7 @@ export default function Home() {
     const customTask: AppTask = {
       id: `custom-${Date.now()}`,
       title: title.slice(0, 30),
-      category: addingCategory,
+      category: normalizeCategory(addingCategory),
       iconKey: iconKeyForCategory(addingCategory),
       assignee: "none",
       selected: false,
@@ -1368,9 +1382,7 @@ export default function Home() {
         const weekDone = weekChores.filter((task) => task.done).length;
         const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
         const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
-        const weekChoreRate = weekChores.length > 0 ? (weekDone / weekChores.length) * 80 : 0;
-        const weekLetterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
-        const weekProgress = Math.round(weekChoreRate + weekLetterRate);
+        const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
         const complete = letterStatus.bothSent && weekProgress >= 100;
         setStatsComplete(complete);
         setWeekStreak(await countCompletedWeekStreak(currentCoupleId));
@@ -1586,9 +1598,7 @@ export default function Home() {
         const weekDone = weekChores.filter((task) => task.done).length;
         const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
         const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
-        const weekChoreRate = weekChores.length > 0 ? (weekDone / weekChores.length) * 80 : 0;
-        const weekLetterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
-        const weekProgress = Math.round(weekChoreRate + weekLetterRate);
+        const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
 
         setWeeklyLetterStatus(letterStatus);
         setLetters(weekLetters);
@@ -1597,12 +1607,28 @@ export default function Home() {
         setClosingWeekProgress(weekProgress);
         setStatsComplete(letterStatus.bothSent && weekProgress >= 100);
         setReportMeta({
-          progress: weekProgress || stat.completionRate,
+          progress: weekProgress,
           completeCount: weekDone || totalDone,
           totalCount: weekChores.length || Math.max(totalDone, 1),
           meDone: weekMeDone || meCount,
           partnerDone: weekPartnerDone || partnerCount,
         });
+        setWeeklyStats((current) => current.map((item) => (
+          item.id === stat.id || item.weekStart === stat.weekStart
+            ? { ...item, completionRate: weekProgress }
+            : item
+        )));
+        try {
+          await upsertWeeklyStats({
+            cycleId,
+            completionRate: weekProgress,
+            meCompletedCount: weekMeDone || meCount,
+            partnerCompletedCount: weekPartnerDone || partnerCount,
+            sentLetterCount: (letterStatus.meSent ? 1 : 0) + (letterStatus.partnerSent ? 1 : 0),
+          });
+        } catch {
+          // 카드/상세 일치용 재계산 저장 실패는 상세 표시를 막지 않음
+        }
       } catch {
         // 상세 로드 실패 시 통계 카드 수치만으로 표시합니다.
       }
@@ -2049,6 +2075,7 @@ export default function Home() {
 
       {homeAdding && (
         <HomeAddChoreSheet
+          templates={templates}
           existingTitles={tasks.map((task) => task.title)}
           onClose={() => {
             setHomeAdding(false);
@@ -2096,8 +2123,8 @@ export default function Home() {
           letter={selectedLetter}
           senderEmoji={
             selectedLetter.from === "me"
-              ? selectedEmoji
-              : (partnerProfile?.avatarEmoji ?? "avatar-mint")
+              ? resolveAvatarId(selectedEmoji)
+              : resolveAvatarId(partnerProfile?.avatarEmoji)
           }
           senderName={
             selectedLetter.from === "me"
@@ -2113,8 +2140,8 @@ export default function Home() {
           reaction={selectedReaction}
           senderEmoji={
             selectedReaction.from === "me"
-              ? selectedEmoji
-              : (partnerProfile?.avatarEmoji ?? "avatar-mint")
+              ? resolveAvatarId(selectedEmoji)
+              : resolveAvatarId(partnerProfile?.avatarEmoji)
           }
           senderName={
             selectedReaction.from === "me"
@@ -2571,10 +2598,12 @@ function AddChoreSheet({
 }
 
 function HomeAddChoreSheet({
+  templates,
   existingTitles,
   onClose,
   onSave,
 }: {
+  templates: AppChoreTemplate[];
   existingTitles: string[];
   onClose: () => void;
   onSave: (title: string, category: string) => void;
@@ -2587,7 +2616,13 @@ function HomeAddChoreSheet({
 
   const iconKey = iconKeyForCategory(category);
   const existingSet = new Set(existingTitles);
-  const options = catalogTitlesForCategory(category).filter((item) => !existingSet.has(item));
+  const templateOptions = templates
+    .filter((item) => normalizeCategory(item.category) === normalizeCategory(category))
+    .map((item) => item.title)
+    .filter((item) => !existingSet.has(item));
+  const options = (templateOptions.length > 0
+    ? templateOptions
+    : catalogTitlesForCategory(category).filter((item) => !existingSet.has(item)));
   const canSave = title.trim().length > 0;
 
   const selectCategory = (next: string) => {
@@ -2750,7 +2785,8 @@ function HomeScreen({
   const partnerName = partnerProfile?.nickname?.trim() || "파트너";
 
   const incompleteGroups = incomplete.reduce<Record<string, AppTask[]>>((acc, task) => {
-    acc[task.category] = [...(acc[task.category] ?? []), task];
+    const key = normalizeCategory(task.category);
+    acc[key] = [...(acc[key] ?? []), task];
     return acc;
   }, {});
 
@@ -3948,7 +3984,7 @@ function LettersScreen({
       list.push({ kind, value, at: +date });
       map.set(day, list);
     };
-    filteredLetters.forEach((letter) => push(letter.createdAt, "letter", letter.reaction || "💌"));
+    filteredLetters.forEach((letter) => push(letter.createdAt, "letter", "letter"));
     filteredReactions.forEach((reaction) => push(reaction.createdAt, "reaction", reaction.reaction));
     map.forEach((list, day) => {
       list.sort((a, b) => {
@@ -4038,7 +4074,13 @@ function LettersScreen({
                 {markers.length > 0 && (
                   <span className="letters-day-markers">
                     {markers.map((marker, markerIndex) => (
-                      <i key={`${day}-${markerIndex}`}>{marker.value || "💌"}</i>
+                      <i key={`${day}-${markerIndex}`} className={marker.kind === "letter" ? "letter" : "reaction"}>
+                        {marker.kind === "letter" ? (
+                          <AssetImage src={reactionLetter} alt="" />
+                        ) : (
+                          marker.value || "💕"
+                        )}
+                      </i>
                     ))}
                   </span>
                 )}
@@ -4060,9 +4102,11 @@ function LettersScreen({
             {dayLetters.map((letter) => (
               <li key={letter.id}>
                 <button className="letters-feed-card" type="button" onClick={() => onSelectLetter(letter)}>
-                  <span className="letters-feed-emoji">{letter.reaction || "💌"}</span>
+                  <span className="letters-feed-emoji letter">
+                    <AssetImage src={reactionLetter} alt="" />
+                  </span>
                   <div>
-                    <strong>💌 편지</strong>
+                    <strong>편지</strong>
                     <p>{letter.body}</p>
                   </div>
                 </button>
@@ -5303,8 +5347,8 @@ function IconBubble({ src, alt }: { src: AssetModule; alt: string }) {
 }
 
 function AvatarMark({ value }: { value: string }) {
-  const avatar = avatarOptions.find((item) => item.id === value);
-  if (!avatar) return <span>{value}</span>;
+  const avatar = avatarOptions.find((item) => item.id === resolveAvatarId(value));
+  if (!avatar) return <AssetImage src={avatarOptions[0].src} alt="" />;
 
   return <AssetImage src={avatar.src} alt="" />;
 }
