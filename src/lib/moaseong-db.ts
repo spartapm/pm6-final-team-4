@@ -88,6 +88,7 @@ type WeeklyChoreRow = {
   category: string;
   assignee: Assignee;
   completed_at: string | null;
+  completed_by?: string | null;
   chore_reactions?: { id: string }[];
 };
 
@@ -130,13 +131,22 @@ export const defaultTasks: AppTask[] = buildCatalogTasks();
 
 export const isPersistedId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
-function mapChoreRow(task: WeeklyChoreRow): AppTask {
+function mapChoreRow(task: WeeklyChoreRow, viewerUserId?: string | null, partnerUserId?: string | null): AppTask {
+  let assignee: Assignee = task.assignee ?? "none";
+  if (task.completed_at && task.completed_by && viewerUserId) {
+    if (task.completed_by === viewerUserId) assignee = "me";
+    else if (partnerUserId && task.completed_by === partnerUserId) assignee = "partner";
+    else if (task.completed_by !== viewerUserId) assignee = "partner";
+  } else if (!task.completed_at) {
+    assignee = "none";
+  }
+
   return {
     id: task.id,
     title: task.title,
     category: task.category,
     iconKey: iconKeyForCategory(task.category),
-    assignee: task.assignee,
+    assignee,
     selected: true,
     done: Boolean(task.completed_at),
     reacted: Boolean(task.chore_reactions?.length),
@@ -179,12 +189,14 @@ export async function getPartnerProfile(userId: string | null): Promise<AppPartn
 export async function getCurrentCouple() {
   const { data, error } = await supabase
     .from("couples")
-    .select("id,user_a_id,user_b_id")
-    .limit(1)
-    .maybeSingle<Couple>();
+    .select("id,user_a_id,user_b_id,connected_at,created_at")
+    .order("created_at", { ascending: false })
+    .returns<Array<Couple & { connected_at?: string | null; created_at?: string }>>();
 
   if (error) throw error;
-  return data;
+  if (!data?.length) return null;
+  // 파트너 연결된 couple을 우선 (고아 solo couple이 남아 있어도)
+  return data.find((couple) => couple.user_b_id) ?? data[0];
 }
 
 export async function ensureCouple(userId: string) {
@@ -240,6 +252,13 @@ export function parseInviteError(error: unknown) {
   return "초대 코드 처리에 실패했어요. 다시 시도해 주세요.";
 }
 
+export function parseDisconnectError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("no_partner_connected")) return "연결된 파트너가 없어요.";
+  if (message.includes("couple_not_found")) return "커플 정보를 찾을 수 없어요.";
+  return "파트너 연결 해제에 실패했어요. 다시 시도해 주세요.";
+}
+
 export async function redeemInviteCode(code: string) {
   const { data, error } = await supabase.rpc("redeem_invite_code", {
     p_code: code,
@@ -247,6 +266,34 @@ export async function redeemInviteCode(code: string) {
 
   if (error) throw error;
   return data as string;
+}
+
+/** 해제 실행자만 새 solo couple을 받고, 상대는 기존 couple+할 일을 유지 */
+export async function disconnectPartner(): Promise<Couple> {
+  const { data, error } = await supabase.rpc("disconnect_partner");
+  if (error) throw error;
+
+  const coupleId = data as string;
+  const { data: couple, error: coupleError } = await supabase
+    .from("couples")
+    .select("id,user_a_id,user_b_id")
+    .eq("id", coupleId)
+    .single<Couple>();
+
+  if (coupleError) throw coupleError;
+  return couple;
+}
+
+export function parseDeleteAccountError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("not_authenticated")) return "로그인이 필요해요.";
+  return "회원 탈퇴에 실패했어요. 다시 시도해 주세요.";
+}
+
+/** 파트너가 있으면 연결만 끊고(상대 할 일 유지), 본인 데이터·auth 유저 삭제 */
+export async function deleteMyAccount() {
+  const { error } = await supabase.rpc("delete_my_account");
+  if (error) throw error;
 }
 
 export function currentWeekRange(offsetWeeks = 0) {
@@ -295,23 +342,31 @@ export async function coupleHasWeeklyChores(coupleId: string) {
   return chores.length > 0;
 }
 
-export async function loadWeeklyChores(cycleId: string): Promise<AppTask[]> {
+export async function loadWeeklyChores(
+  cycleId: string,
+  viewerUserId?: string | null,
+  partnerUserId?: string | null,
+): Promise<AppTask[]> {
   const { data, error } = await supabase
     .from("weekly_chores")
-    .select("id,title,category,assignee,completed_at,chore_reactions(id)")
+    .select("id,title,category,assignee,completed_at,completed_by,chore_reactions(id)")
     .eq("cycle_id", cycleId)
     .order("created_at", { ascending: true })
     .returns<WeeklyChoreRow[]>();
 
   if (error) throw error;
-  return data.map(mapChoreRow);
+  return data.map((task) => mapChoreRow(task, viewerUserId, partnerUserId));
 }
 
-export async function loadPreviousCycleChores(coupleId: string): Promise<AppTask[]> {
+export async function loadPreviousCycleChores(
+  coupleId: string,
+  viewerUserId?: string | null,
+  partnerUserId?: string | null,
+): Promise<AppTask[]> {
   const { weekStart } = currentWeekRange(-1);
   const { data, error } = await supabase
     .from("weekly_cycles")
-    .select("id,weekly_chores(id,title,category,assignee,completed_at,chore_reactions(id))")
+    .select("id,weekly_chores(id,title,category,assignee,completed_at,completed_by,chore_reactions(id))")
     .eq("couple_id", coupleId)
     .eq("week_start", weekStart)
     .maybeSingle<{ id: string; weekly_chores: WeeklyChoreRow[] | null }>();
@@ -320,14 +375,20 @@ export async function loadPreviousCycleChores(coupleId: string): Promise<AppTask
   if (!data?.weekly_chores?.length) return [];
 
   return data.weekly_chores.map((task) => ({
-    ...mapChoreRow(task),
+    ...mapChoreRow(task, viewerUserId, partnerUserId),
     selected: true,
     done: false,
     reacted: false,
   }));
 }
 
-export async function replaceWeeklyChores(cycleId: string, userId: string, tasks: AppTask[]): Promise<AppTask[]> {
+export async function replaceWeeklyChores(
+  cycleId: string,
+  userId: string,
+  tasks: AppTask[],
+  viewerUserId?: string | null,
+  partnerUserId?: string | null,
+): Promise<AppTask[]> {
   const { error: deleteError } = await supabase.from("weekly_chores").delete().eq("cycle_id", cycleId);
   if (deleteError) throw deleteError;
 
@@ -341,18 +402,18 @@ export async function replaceWeeklyChores(cycleId: string, userId: string, tasks
         cycle_id: cycleId,
         title: task.title,
         category: task.category,
-        assignee: task.assignee,
+        assignee: "none" as const,
         completed_by: null,
         completed_at: null,
       })),
     )
-    .select("id,title,category,assignee,completed_at")
+    .select("id,title,category,assignee,completed_at,completed_by")
     .returns<WeeklyChoreRow[]>();
 
   if (error) throw error;
 
   return data.map((task) => ({
-    ...mapChoreRow(task),
+    ...mapChoreRow(task, viewerUserId ?? userId, partnerUserId),
     selected: true,
     done: false,
     reacted: false,
@@ -385,7 +446,8 @@ export async function updateWeeklyChore(taskId: string, userId: string, patch: P
   const update: Record<string, string | null> = {};
 
   if (typeof patch.title === "string") update.title = patch.title;
-  if (patch.assignee) update.assignee = patch.assignee;
+  // 완료 처리 시 assignee(me/partner)는 viewer 기준 표시용 — DB에는 completed_by만 기록
+  if (patch.assignee && typeof patch.done !== "boolean") update.assignee = patch.assignee;
   if (typeof patch.done === "boolean") {
     update.completed_by = patch.done ? userId : null;
     update.completed_at = patch.done ? new Date().toISOString() : null;

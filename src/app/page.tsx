@@ -93,7 +93,9 @@ import {
   createNotification,
   currentWeekRange,
   deleteChoreTemplate,
+  deleteMyAccount,
   deleteWeeklyChore,
+  disconnectPartner,
   ensureCouple,
   ensureCurrentCycle,
   ensureCurrentCycleForWeek,
@@ -116,6 +118,8 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   mergeTemplatesIntoCatalog,
+  parseDeleteAccountError,
+  parseDisconnectError,
   parseInviteError,
   redeemInviteCode,
   replaceWeeklyChores,
@@ -237,6 +241,7 @@ export default function Home() {
   const [isAuthResolving, setIsAuthResolving] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const isHandlingAuthRef = useRef(false);
+  const inviteBusyRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
@@ -258,6 +263,7 @@ export default function Home() {
   const [showInviteCodeModal, setShowInviteCodeModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [inviteEntry, setInviteEntry] = useState<"onboarding" | "settings">("onboarding");
   const [choreMode, setChoreMode] = useState<"first" | "repeat">("first");
   const [statsComplete, setStatsComplete] = useState(false);
   const [weekStreak, setWeekStreak] = useState(0);
@@ -358,7 +364,7 @@ export default function Home() {
         window.localStorage.removeItem(weekCloseStorageKey(userId, range.weekStart));
         return false;
       }
-      const weekChores = await loadWeeklyChores(cycleId);
+      const weekChores = await loadWeeklyChores(cycleId, userId, resolvedPartnerId);
       const doneCount = weekChores.filter((task) => task.done).length;
       const choreRate = weekChores.length > 0 ? (doneCount / weekChores.length) * 80 : 0;
       const letterRate = (letterStatus.meSent ? 10 : 0) + (letterStatus.partnerSent ? 10 : 0);
@@ -401,7 +407,7 @@ export default function Home() {
       : null;
 
     const [savedTasks, savedLetters, savedReactions, savedStats, notifs, letterStatus, streak] = await Promise.all([
-      loadWeeklyChores(cycleId),
+      loadWeeklyChores(cycleId, userId, partner),
       loadLetters(userId),
       loadCoupleReactions(coupleId, userId),
       loadWeeklyStats(coupleId, partner),
@@ -420,6 +426,7 @@ export default function Home() {
     setWeeklyLetterStatus(letterStatus);
     setWeekStreak(streak);
     if (partner) setPartnerProfile(await getPartnerProfile(partner));
+    else setPartnerProfile(null);
 
     await evaluateWeekClosePopup(userId, coupleId, partner);
 
@@ -430,14 +437,14 @@ export default function Home() {
     const seeded = await seedDefaultTemplates(userId);
     setTemplates(seeded);
 
-    const savedTasks = await loadWeeklyChores(await ensureCurrentCycle(coupleId));
+    const savedTasks = await loadWeeklyChores(await ensureCurrentCycle(coupleId), userId, partnerId);
     if (savedTasks.length > 0) {
       setTasks(savedTasks);
       setChoreMode("repeat");
       return;
     }
 
-    const previousTasks = await loadPreviousCycleChores(coupleId);
+    const previousTasks = await loadPreviousCycleChores(coupleId, userId, partnerId);
     if (previousTasks.length > 0) {
       setTasks(previousTasks);
       setChoreMode("repeat");
@@ -508,6 +515,7 @@ export default function Home() {
       }
 
       if (authIntent === "signup") {
+        setInviteEntry("onboarding");
         setScreen("invite");
       } else if (savedTaskCount > 0) {
         setScreen("home");
@@ -622,6 +630,49 @@ export default function Home() {
 
   const goHome = () => setScreen("home");
 
+  const resetSessionToLanding = () => {
+    setScreen("landing");
+    setTasks([]);
+    setLetters([]);
+    setReactions([]);
+    setWeeklyStats([]);
+    setNotifications([]);
+    setTemplates([]);
+    setWeeklyLetterStatus({ meSent: false, partnerSent: false, bothSent: false });
+    setCurrentUserId(null);
+    setCurrentCoupleId(null);
+    setCurrentCycleId(null);
+    setPartnerId(null);
+    setPartnerProfile(null);
+    setMyCode("");
+    setInviteCode("");
+    setLetterBody("");
+    setReaction("");
+    setClosingWeekTasks([]);
+    setClosingWeekRange(null);
+    setShowWeekClosePopup(false);
+    setIcebreakerPhrasesCache(null);
+    setShowIcebreakerAi(false);
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    resetSessionToLanding();
+  };
+
+  const handleDeleteAccount = async () => {
+    setIsSaving(true);
+    try {
+      await deleteMyAccount();
+      await supabase.auth.signOut();
+      resetSessionToLanding();
+    } catch (error) {
+      showAlert("알림", parseDeleteAccountError(error));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleSocialLogin = async (mode: "social" | "login") => {
     window.localStorage.setItem("moaseong-auth-intent", mode === "social" ? "signup" : "login");
     setIsLoggingIn(true);
@@ -710,29 +761,44 @@ export default function Home() {
 
   const updateTask = async (id: string, patch: Partial<AppTask>) => {
     const previous = tasks.find((task) => task.id === id);
-    setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+    const localPatch: Partial<AppTask> = {
+      ...patch,
+      ...(patch.done === true ? { assignee: "me" as const } : {}),
+      ...(patch.done === false ? { assignee: "none" as const } : {}),
+    };
+    setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...localPatch } : task)));
 
     const userId = await ensureSignedInUser();
     if (!userId || !isPersistedId(id)) return;
 
     try {
-      await updateWeeklyChore(id, userId, patch);
+      await updateWeeklyChore(id, userId, {
+        ...(typeof patch.done === "boolean" ? { done: patch.done } : {}),
+        ...(typeof patch.title === "string" ? { title: patch.title } : {}),
+      });
       if (patch.done && !previous?.done && partnerId && notificationEnabled) {
         const task = tasks.find((item) => item.id === id);
-        await createNotification({
-          userId: partnerId,
-          choreId: id,
-          title: "집안일 완료 알림",
-          body: `${nickname || "파트너"}님이 '${task?.title ?? "할 일"}'을(를) 완료했어요.`,
-        });
+        try {
+          await createNotification({
+            userId: partnerId,
+            choreId: id,
+            title: "집안일 완료 알림",
+            body: `${nickname || "파트너"}님이 '${task?.title ?? "할 일"}'을(를) 완료했어요.`,
+          });
+        } catch {
+          // 알림 실패는 완료 저장 성공을 막지 않음
+        }
       }
     } catch {
+      if (previous) {
+        setTasks((current) => current.map((task) => (task.id === id ? previous : task)));
+      }
       showAlert("저장 실패", "할 일 저장에 실패했어요. 다시 시도해 주세요.");
     }
   };
 
   const completeHomeTask = (id: string) => {
-    void updateTask(id, { done: true, assignee: "me" });
+    void updateTask(id, { done: true });
   };
 
   const renameHomeTask = async (id: string, title: string) => {
@@ -825,6 +891,44 @@ export default function Home() {
     syncCoupleState(userId, couple);
     await prepareChoreSelection(couple.id, userId);
     setScreen("chores");
+  };
+
+  const disconnectPartnerAndReset = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+    if (!partnerId) {
+      showAlert("알림", "연결된 파트너가 없어요.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const newCouple = await disconnectPartner();
+      syncCoupleState(userId, newCouple);
+      setPartnerId(null);
+      setPartnerProfile(null);
+      setMyCode("");
+      setInviteCode("");
+      setCurrentCycleId(null);
+      setTasks([]);
+      setLetters([]);
+      setReactions([]);
+      setWeeklyStats([]);
+      setWeeklyLetterStatus({ meSent: false, partnerSent: false, bothSent: false });
+      setClosingWeekTasks([]);
+      setClosingWeekRange(null);
+      setShowWeekClosePopup(false);
+      setIcebreakerPhrasesCache(null);
+      setLetterBody("");
+      setReaction("");
+      setChoreMode("first");
+      await prepareChoreSelection(newCouple.id, userId);
+      setScreen("chores");
+    } catch (error) {
+      showAlert("알림", parseDisconnectError(error));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const openTemplateManage = async () => {
@@ -1082,7 +1186,7 @@ export default function Home() {
       category: addingCategory,
       iconKey: iconKeyForCategory(addingCategory),
       assignee: "none",
-      selected: true,
+      selected: false,
       done: false,
       reacted: false,
     };
@@ -1128,22 +1232,31 @@ export default function Home() {
   };
 
   const handleInviteNext = async () => {
+    if (inviteBusyRef.current || isSaving) return;
     const userId = await ensureSignedInUser();
     if (!userId) return;
+    const fromSettings = inviteEntry === "settings";
 
     if (!inviteCode.trim() && !myCode) {
-      // 왼쪽: 나중에 할게요 → A-06 / 오른쪽: 연결할게요 → A-04 유지
+      // 왼쪽: 나중에 할게요 → A-06 or F-01 / 오른쪽: 연결할게요 → A-04 유지
       showConfirm(
         "",
         "아직 코드를 생성하지 않았어요.\n연결을 나중에 할까요?",
         () => undefined,
         "연결할게요",
         "나중에 할게요",
-        () => void proceedInviteToChores(),
+        () => {
+          if (fromSettings) {
+            setScreen("mypage");
+            return;
+          }
+          void proceedInviteToChores();
+        },
       );
       return;
     }
 
+    inviteBusyRef.current = true;
     setIsSaving(true);
     try {
       await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
@@ -1154,6 +1267,14 @@ export default function Home() {
         syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
         const hasPartnerTasks = await coupleHasWeeklyChores(coupleId);
         await loadCycleData(coupleId, userId);
+        setInviteCode("");
+
+        if (fromSettings) {
+          showAlert("연결 완료", "파트너와 연결됐어요.");
+          setScreen("mypage");
+          return;
+        }
+
         if (hasPartnerTasks) {
           setScreen("home");
         } else {
@@ -1166,6 +1287,9 @@ export default function Home() {
             "아니오",
           );
         }
+      } else if (fromSettings) {
+        // 내 코드만 있는 경우: 상대 입력 대기 — F-01로 복귀 (연결 상태 변경 없음)
+        setScreen("mypage");
       } else {
         const couple = await ensureCouple(userId);
         syncCoupleState(userId, couple);
@@ -1175,11 +1299,17 @@ export default function Home() {
       const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
       showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
     } finally {
+      inviteBusyRef.current = false;
       setIsSaving(false);
     }
   };
 
   const handleSkipInvite = () => {
+    if (inviteEntry === "settings") {
+      setScreen("mypage");
+      return;
+    }
+
     // 왼쪽: 나중에 할게요 → A-06 / 오른쪽: 연결할게요 → A-04 유지
     showConfirm(
       "",
@@ -1234,7 +1364,7 @@ export default function Home() {
 
         const letterStatus = await getWeeklyLetterStatus(targetCycleId, userId, partnerId);
         setWeeklyLetterStatus(letterStatus);
-        const weekChores = await loadWeeklyChores(targetCycleId);
+        const weekChores = await loadWeeklyChores(targetCycleId, userId, partnerId);
         const weekDone = weekChores.filter((task) => task.done).length;
         const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
         const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
@@ -1346,16 +1476,20 @@ export default function Home() {
         ...current,
       ]);
       if (partnerId && notificationEnabled) {
-        await createNotification({
-          userId: partnerId,
-          choreId: id,
-          title: "리액션 알림",
-          body: `${nickname || "파트너"}님이 '${task.title}'에 리액션을 보냈어요.`,
-        });
+        try {
+          await createNotification({
+            userId: partnerId,
+            choreId: id,
+            title: "리액션 알림",
+            body: `${nickname || "파트너"}님이 '${task.title}'에 리액션을 보냈어요.`,
+          });
+        } catch {
+          // 리액션 저장 성공 후 알림 실패는 롤백하지 않음
+        }
       }
     } catch {
       setTasks((current) => current.map((item) => (item.id === id ? { ...item, reacted: false } : item)));
-      showToast("전송에 실패했어요. 다시 시도해 주세요.");
+      showToast("전송에 실패했어요.");
     }
   };
 
@@ -1445,7 +1579,7 @@ export default function Home() {
       try {
         const cycleId = await ensureCurrentCycleForWeek(currentCoupleId, stat.weekStart, stat.weekEnd);
         const [weekChores, letterStatus, weekLetters] = await Promise.all([
-          loadWeeklyChores(cycleId),
+          loadWeeklyChores(cycleId, currentUserId, partnerId),
           getWeeklyLetterStatus(cycleId, currentUserId, partnerId),
           loadLetters(currentUserId),
         ]);
@@ -1521,6 +1655,7 @@ export default function Home() {
             selectedEmoji={selectedEmoji}
             inviteCode={inviteCode}
             myCode={myCode}
+            entry={inviteEntry}
             onInviteCodeChange={setInviteCode}
             onCreateCode={() => void createInviteCodeForUser()}
             onCopyCode={() => void copyInviteCode()}
@@ -1686,18 +1821,17 @@ export default function Home() {
             nickname={nickname}
             selectedEmoji={selectedEmoji}
             partnerProfile={partnerProfile}
+            partnerConnected={Boolean(partnerId)}
             notificationEnabled={notificationEnabled}
             onEdit={() => setShowProfileEdit(true)}
             onManageTasks={() => void openTemplateManage()}
-            onConnectPartner={() => setScreen("invite")}
-            onLogout={async () => {
-              await supabase.auth.signOut();
-              setScreen("landing");
-              setTasks([]);
-              setLetters([]);
-              setReactions([]);
-              setCurrentUserId(null);
+            onConnectPartner={() => {
+              setInviteEntry("settings");
+              setScreen("invite");
             }}
+            onDisconnectPartner={() => void disconnectPartnerAndReset()}
+            onLogout={() => void handleLogout()}
+            onDeleteAccount={() => void handleDeleteAccount()}
             showConfirm={showConfirm}
             showAlert={showAlert}
           />
@@ -1757,13 +1891,7 @@ export default function Home() {
       case "accountSettings":
         return (
           <AccountSettingsScreen
-            onLogout={async () => {
-              await supabase.auth.signOut();
-              setScreen("landing");
-              setTasks([]);
-              setLetters([]);
-              setCurrentUserId(null);
-            }}
+            onLogout={() => void handleLogout()}
             onBack={() => setScreen("mypage")}
           />
         );
@@ -2182,6 +2310,7 @@ function InviteScreen({
   selectedEmoji,
   inviteCode,
   myCode,
+  entry,
   onInviteCodeChange,
   onCreateCode,
   onCopyCode,
@@ -2192,6 +2321,7 @@ function InviteScreen({
   selectedEmoji: string;
   inviteCode: string;
   myCode: string;
+  entry: "onboarding" | "settings";
   onInviteCodeChange: (value: string) => void;
   onCreateCode: () => void;
   onCopyCode: () => void;
@@ -2199,6 +2329,8 @@ function InviteScreen({
   onSkip: () => void;
   isSaving: boolean;
 }) {
+  const primaryLabel = entry === "settings" ? "연결하기" : "다음으로 →";
+
   return (
     <div className="invite-screen">
       <div className="invite-couple">
@@ -2267,7 +2399,7 @@ function InviteScreen({
 
       <div className="invite-footer">
         <button className="start-primary" disabled={isSaving} type="button" onClick={onNext}>
-          {isSaving ? "연결 중..." : "다음으로 →"}
+          {isSaving ? "연결 중..." : primaryLabel}
         </button>
         <button className="invite-later" disabled={isSaving} type="button" onClick={onSkip}>
           나중에 연결할게요
@@ -4263,22 +4395,28 @@ function MyPageScreen({
   nickname,
   selectedEmoji,
   partnerProfile,
+  partnerConnected,
   notificationEnabled,
   onEdit,
   onManageTasks,
   onConnectPartner,
+  onDisconnectPartner,
   onLogout,
+  onDeleteAccount,
   showConfirm,
   showAlert,
 }: {
   nickname: string;
   selectedEmoji: string;
   partnerProfile: AppPartnerProfile | null;
+  partnerConnected: boolean;
   notificationEnabled: boolean;
   onEdit: () => void;
   onManageTasks: () => void;
   onConnectPartner: () => void;
+  onDisconnectPartner: () => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
   showConfirm: (
     title: string,
     message: string,
@@ -4293,14 +4431,33 @@ function MyPageScreen({
   const [notifLetter, setNotifLetter] = useState(true);
   const [notifProgress, setNotifProgress] = useState(true);
   const [notifWeekly, setNotifWeekly] = useState(false);
-  const connected = Boolean(partnerProfile);
 
   const openDisconnectConfirm = () => {
     showConfirm(
-      "파트너 연결을 해제할까요?",
-      "연결을 해제하면 함께한 할 일 목록과 성 히스토리가 모두 사라지며, 이후 할 일을 새로 설정해야 해요.",
-      () => showAlert("알림", "연결 해제 기능은 준비 중이에요."),
-      "해제할게요",
+      "",
+      "연결을 끊으면 데이터가 분리돼요. 파트너 연결을 해제하시겠습니까?",
+      onDisconnectPartner,
+      "확인",
+      "취소",
+    );
+  };
+
+  const openLogoutConfirm = () => {
+    showConfirm(
+      "",
+      "로그아웃 하시겠습니까?",
+      onLogout,
+      "확인",
+      "취소",
+    );
+  };
+
+  const openDeleteAccountConfirm = () => {
+    showConfirm(
+      "",
+      "회원 탈퇴 시 계정 정보가 모두 삭제되며 복구할 수 없습니다. 탈퇴하시겠습니까?",
+      onDeleteAccount,
+      "확인",
       "취소",
     );
   };
@@ -4325,33 +4482,41 @@ function MyPageScreen({
         <div className="settings-card">
           <div className="settings-partner-row">
             <span className="settings-avatar">
-              <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-queen"} />
+              <AvatarMark value={partnerConnected ? (partnerProfile?.avatarEmoji ?? "avatar-mint") : "avatar-pink"} />
             </span>
             <div className="settings-partner-info">
-              <strong>{connected ? (partnerProfile?.nickname?.trim() || "파트너") : "파트너 없음"}</strong>
-              {connected ? (
+              <strong>
+                {partnerConnected
+                  ? (partnerProfile?.nickname?.trim() || "파트너")
+                  : "파트너 없음"}
+              </strong>
+              {partnerConnected ? (
                 <em className="connected"><i />연결됨</em>
               ) : (
                 <em className="disconnected">미연결</em>
               )}
             </div>
-            {connected ? (
-              <button className="settings-connected-chip" type="button" disabled>✓ 연결됨</button>
+            {partnerConnected ? (
+              <span className="settings-connected-chip" aria-hidden>✓ 연결됨</span>
             ) : (
               <button className="settings-connect-chip" type="button" onClick={onConnectPartner}>연결하기</button>
             )}
           </div>
-          <div className="settings-card-divider" />
-          <div className="settings-inline-row">
-            <span className="settings-row-icon warn"><AssetImage src={commonWarning} alt="" /></span>
-            <div>
-              <strong>파트너 연결 해제</strong>
-              <span>연결을 끊으면 데이터가 분리돼요</span>
-            </div>
-            <button className="settings-danger-text" type="button" onClick={openDisconnectConfirm}>
-              해제
-            </button>
-          </div>
+          {partnerConnected && (
+            <>
+              <div className="settings-card-divider" />
+              <div className="settings-inline-row">
+                <span className="settings-row-icon warn"><AssetImage src={commonWarning} alt="" /></span>
+                <div>
+                  <strong>파트너 연결 해제</strong>
+                  <span>연결을 끊으면 데이터가 분리돼요</span>
+                </div>
+                <button className="settings-danger-text" type="button" onClick={openDisconnectConfirm}>
+                  해제
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -4499,11 +4664,11 @@ function MyPageScreen({
       </section>
 
       <div className="settings-account">
-        <button className="settings-logout" type="button" onClick={onLogout}>로그아웃</button>
+        <button className="settings-logout" type="button" onClick={openLogoutConfirm}>로그아웃</button>
         <button
           className="settings-withdraw"
           type="button"
-          onClick={() => showAlert("알림", "회원 탈퇴 기능은 준비 중이에요.")}
+          onClick={openDeleteAccountConfirm}
         >
           회원 탈퇴
         </button>
