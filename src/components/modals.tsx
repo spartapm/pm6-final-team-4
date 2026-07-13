@@ -41,7 +41,7 @@ export function ConfirmDialog({
   onCancel: () => void;
 }) {
   return (
-    <ModalOverlay onClose={onCancel}>
+    <ModalOverlay>
       {title ? <h2 className="modal-title">{title}</h2> : null}
       {title ? <p className="modal-message">{message}</p> : <DialogMessage message={message} />}
       <div className="modal-actions">

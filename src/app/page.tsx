@@ -814,6 +814,10 @@ export default function Home() {
     void updateTask(id, { done: true });
   };
 
+  const uncompleteHomeTask = (id: string) => {
+    void updateTask(id, { done: false });
+  };
+
   const renameHomeTask = async (id: string, title: string) => {
     const nextTitle = title.trim().slice(0, 30);
     if (!nextTitle) {
@@ -1687,6 +1691,7 @@ export default function Home() {
             onCopyCode={() => void copyInviteCode()}
             onNext={() => void handleInviteNext()}
             onSkip={handleSkipInvite}
+            onBack={inviteEntry === "settings" ? () => setScreen("mypage") : undefined}
             isSaving={isSaving}
           />
         );
@@ -1935,6 +1940,8 @@ export default function Home() {
             weekEnd={homeWeek.weekEnd}
             partnerProfile={partnerProfile}
             onComplete={completeHomeTask}
+            onUncomplete={uncompleteHomeTask}
+            onCloseWeek={() => void closeWeek()}
             onReact={requestReact}
             onWriteLetter={() => setScreen("letter")}
             onRename={(id, title) => renameHomeTask(id, title)}
@@ -2343,6 +2350,7 @@ function InviteScreen({
   onCopyCode,
   onNext,
   onSkip,
+  onBack,
   isSaving,
 }: {
   selectedEmoji: string;
@@ -2354,12 +2362,14 @@ function InviteScreen({
   onCopyCode: () => void;
   onNext: () => void;
   onSkip: () => void;
+  onBack?: () => void;
   isSaving: boolean;
 }) {
   const primaryLabel = entry === "settings" ? "연결하기" : "다음으로 →";
 
   return (
     <div className="invite-screen">
+      {onBack && <BackChip onClick={onBack} />}
       <div className="invite-couple">
         <span className="invite-avatar me"><AvatarMark value={selectedEmoji} /></span>
         <span className="invite-heart-line">
@@ -2745,6 +2755,8 @@ function HomeScreen({
   weekEnd,
   partnerProfile,
   onComplete,
+  onUncomplete,
+  onCloseWeek,
   onReact,
   onWriteLetter,
   onRename,
@@ -2762,6 +2774,8 @@ function HomeScreen({
   weekEnd: string;
   partnerProfile: AppPartnerProfile | null;
   onComplete: (id: string) => void;
+  onUncomplete: (id: string) => void;
+  onCloseWeek: () => void;
   onReact: (id: string, title: string, reactionValue: string, reactionLabel: string) => void;
   onWriteLetter: () => void;
   onRename: (id: string, title: string) => Promise<boolean>;
@@ -2876,24 +2890,35 @@ function HomeScreen({
           <ul className="home-done-list">
             {visibleDone.map((task) => (
               <li key={task.id}>
-                <div className="home-done-item">
-                  <AssetImage src={commonCheckboxFilled} alt="" />
-                  <span>{task.title}</span>
-                </div>
-                {doneTab === "partner" && (
-                  <div className="home-reaction-row">
-                    {reactionButtons.map((item) => (
-                      <button
-                        aria-label={`${item.label} 리액션`}
-                        disabled={task.reacted}
-                        key={item.value}
-                        type="button"
-                        onClick={() => onReact(task.id, task.title, item.value, item.label)}
-                      >
-                        <AssetImage src={item.src} alt="" />
-                      </button>
-                    ))}
-                  </div>
+                {doneTab === "me" ? (
+                  <button
+                    className="home-done-item clickable"
+                    type="button"
+                    onClick={() => onUncomplete(task.id)}
+                  >
+                    <AssetImage src={commonCheckboxFilled} alt="" />
+                    <span>{task.title}</span>
+                  </button>
+                ) : (
+                  <>
+                    <div className="home-done-item">
+                      <AssetImage src={commonCheckboxFilled} alt="" />
+                      <span>{task.title}</span>
+                    </div>
+                    <div className="home-reaction-row">
+                      {reactionButtons.map((item) => (
+                        <button
+                          aria-label={`${item.label} 리액션`}
+                          disabled={task.reacted}
+                          key={item.value}
+                          type="button"
+                          onClick={() => onReact(task.id, task.title, item.value, item.label)}
+                        >
+                          <AssetImage src={item.src} alt="" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
               </li>
             ))}
@@ -2997,6 +3022,10 @@ function HomeScreen({
           })
         )}
       </section>
+
+      <button className="home-close-week-button" type="button" onClick={onCloseWeek}>
+        주기 마감하기
+      </button>
     </div>
   );
 }

@@ -506,6 +506,11 @@ input[type="checkbox"] {
   background: linear-gradient(180deg, #fff6ef 0%, #f7efff 48%, #ebe4ff 100%);
 }
 
+.invite-screen > .back-chip {
+  align-self: flex-start;
+  margin: 0 0 -4px;
+}
+
 .invite-couple {
   display: flex;
   align-items: center;
@@ -3439,6 +3444,18 @@ h3 {
   flex-shrink: 0;
 }
 
+button.home-done-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+button.home-done-item.clickable:active {
+  opacity: 0.75;
+}
+
 .home-reaction-row {
   display: flex;
   justify-content: flex-end;
@@ -3475,6 +3492,18 @@ h3 {
   font-size: 13px;
   font-weight: 700;
   text-align: center;
+}
+
+.home-close-week-button {
+  width: 100%;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--primary);
+  color: #fff;
+  padding: 15px;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .home-category {
