@@ -18,41 +18,103 @@ export const ICEBREAKER_PERSPECTIVES: IcebreakerPerspective[] = [
   "다음 주 응원하기",
 ];
 
-/** 추후 실제 LLM API로 교체. 설계 문서: docs/H-01-말문틔우기-AI-프롬프트.md */
+const HISTORY_ROUNDS = 8;
+
+function historyStorageKey(userId: string) {
+  return `moaseong-icebreaker-history:${userId}`;
+}
+
+function emptyPhrases(): IcebreakerPhrases {
+  return {
+    "완료한 일 짚어주기": [],
+    "내 마음 표현하기": [],
+    "다음 주 응원하기": [],
+  };
+}
+
+/** 사용자별 최근 8회 노출분(관점당 최대 24개) 슬라이딩 윈도우 */
+export function loadRecentIcebreakerPhrases(userId: string | null | undefined): IcebreakerPhrases {
+  const recent = emptyPhrases();
+  if (!userId || typeof window === "undefined") return recent;
+
+  try {
+    const raw = window.localStorage.getItem(historyStorageKey(userId));
+    if (!raw) return recent;
+    const parsed = JSON.parse(raw) as { rounds?: IcebreakerPhrases[] };
+    const rounds = Array.isArray(parsed.rounds) ? parsed.rounds.slice(-HISTORY_ROUNDS) : [];
+
+    for (const round of rounds) {
+      for (const perspective of ICEBREAKER_PERSPECTIVES) {
+        const list = round?.[perspective];
+        if (!Array.isArray(list)) continue;
+        recent[perspective].push(...list.filter((item): item is string => typeof item === "string"));
+      }
+    }
+
+    for (const perspective of ICEBREAKER_PERSPECTIVES) {
+      recent[perspective] = recent[perspective].slice(-HISTORY_ROUNDS * 3);
+    }
+  } catch {
+    // 이력 파싱 실패 시 빈 이력으로 진행
+  }
+
+  return recent;
+}
+
+export function rememberIcebreakerPhrases(userId: string | null | undefined, phrases: IcebreakerPhrases) {
+  if (!userId || typeof window === "undefined") return;
+
+  try {
+    const key = historyStorageKey(userId);
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? (JSON.parse(raw) as { rounds?: IcebreakerPhrases[] }) : { rounds: [] };
+    const rounds = Array.isArray(parsed.rounds) ? parsed.rounds : [];
+    rounds.push(phrases);
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ rounds: rounds.slice(-HISTORY_ROUNDS) }),
+    );
+  } catch {
+    // 저장 실패해도 문구 사용은 가능
+  }
+}
+
+/** H-01: 서버 /api/icebreaker → OpenAI gpt-5.4-mini */
 export async function requestIcebreakerPhrases({
   partnerNickname,
   weeklySummary,
+  userId,
+  recentPhrasesByPerspective,
 }: {
   partnerNickname: string;
   weeklySummary: WeeklySummaryInput;
+  userId?: string | null;
   recentPhrasesByPerspective?: Partial<Record<IcebreakerPerspective, string[]>>;
 }): Promise<IcebreakerPhrases> {
-  await new Promise((resolve) => setTimeout(resolve, 450));
+  const recent = recentPhrasesByPerspective
+    ?? (userId ? loadRecentIcebreakerPhrases(userId) : emptyPhrases());
 
-  const name = partnerNickname.trim() || "파트너";
-  const items = weeklySummary.completed_items;
-  const itemA = items[0] ?? "집안일";
-  const itemB = items[1] ?? items[0] ?? "할 일";
-  const rate = weeklySummary.contribution_rate;
-  const done = weeklySummary.completed_count;
+  const response = await fetch("/api/icebreaker", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      partnerNickname,
+      weeklySummary,
+      recentPhrasesByPerspective: recent,
+    }),
+  });
 
-  return {
-    "완료한 일 짚어주기": [
-      `${itemA} 해줘서 `,
-      `${itemA}이랑 ${itemB} 보니까 `,
-      `이번 주 ${itemA}까지 챙겨줘서 `,
-    ].map((text) => text.slice(0, 40)),
-    "내 마음 표현하기": [
-      `이번 주 네가 해준 거 생각하니까 `,
-      `혼자 다 한 것 같아서 `,
-      `문득 고마운 마음이 들어서 `,
-    ].map((text) => text.slice(0, 40)),
-    "다음 주 응원하기": [
-      `이번 주 ${done}개나 해낸 거 보면 `,
-      `기여율 ${rate}%까지 간 거 보니까 `,
-      `다음 주도 이렇게 같이 가면 `,
-    ].map((text) => text.slice(0, 40)),
+  const payload = (await response.json()) as {
+    phrases?: IcebreakerPhrases;
+    error?: string;
   };
+
+  if (!response.ok || !payload.phrases) {
+    throw new Error(payload.error || "AI 응답에 실패했어요.");
+  }
+
+  rememberIcebreakerPhrases(userId, payload.phrases);
+  return payload.phrases;
 }
 
 export function subjectParticleName(nickname: string) {

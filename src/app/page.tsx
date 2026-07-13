@@ -2159,6 +2159,7 @@ export default function Home() {
 
       {showIcebreakerAi && (
         <IcebreakerAiModal
+          userId={currentUserId}
           partnerNickname={partnerProfile?.nickname?.trim() || "파트너"}
           tasks={
             screen === "weeklyLetter" && closingWeekTasks.length > 0
@@ -3448,6 +3449,7 @@ function appendIcebreakerPhrase(current: string, phrase: string) {
 }
 
 function IcebreakerAiModal({
+  userId,
   partnerNickname,
   tasks,
   cachedPhrases,
@@ -3457,6 +3459,7 @@ function IcebreakerAiModal({
   showAlert,
   showConfirm,
 }: {
+  userId: string | null;
   partnerNickname: string;
   tasks: AppTask[];
   cachedPhrases: IcebreakerPhrases | null;
@@ -3504,6 +3507,7 @@ function IcebreakerAiModal({
     let cancelled = false;
     setLoading(true);
     void requestIcebreakerPhrases({
+      userId,
       partnerNickname,
       weeklySummary: {
         completed_count: completedCount,
@@ -3526,7 +3530,7 @@ function IcebreakerAiModal({
     return () => {
       cancelled = true;
     };
-    // 모달 오픈 시 1회만 호출 (캐시 없으면)
+    // 모달 오픈 시 1회만 호출 (세션 캐시 있으면 재사용, 없으면 OpenAI 1회)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
