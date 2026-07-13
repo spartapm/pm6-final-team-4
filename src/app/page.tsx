@@ -354,8 +354,8 @@ export default function Home() {
     setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
   };
 
-  // v2: DB 리셋 후 예전 pending 마감 모달이 다시 뜨지 않도록 키 버전 갱신
-  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:v2:${userId}:${weekStart}`;
+  // v3: QA full wipe 이후 예전 pending/세션 잔여 방지
+  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:v3:${userId}:${weekStart}`;
 
   const evaluateWeekClosePopup = useCallback(async (userId: string, coupleId: string | null, resolvedPartnerId: string | null = partnerId) => {
     if (!coupleId) {
@@ -643,7 +643,18 @@ export default function Home() {
 
   const goHome = () => setScreen("home");
 
+  const clearMoaseongBrowserState = () => {
+    if (typeof window === "undefined") return;
+    const keys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key && key.startsWith("moaseong-")) keys.push(key);
+    }
+    keys.forEach((key) => window.localStorage.removeItem(key));
+  };
+
   const resetSessionToLanding = () => {
+    clearMoaseongBrowserState();
     setScreen("landing");
     setTasks([]);
     setLetters([]);
@@ -666,10 +677,16 @@ export default function Home() {
     setShowWeekClosePopup(false);
     setIcebreakerPhrasesCache(null);
     setShowIcebreakerAi(false);
+    setInviteEntry("onboarding");
+    setDialog(null);
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch {
+      // 로컬 세션 정리 실패해도 랜딩으로 보냄
+    }
     resetSessionToLanding();
   };
 
@@ -677,8 +694,13 @@ export default function Home() {
     setIsSaving(true);
     try {
       await deleteMyAccount();
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } catch {
+        // auth.users 삭제 후 세션이 이미 무효일 수 있음
+      }
       resetSessionToLanding();
+      showAlert("알림", "회원 탈퇴가 완료되었어요.");
     } catch (error) {
       showAlert("알림", parseDeleteAccountError(error));
     } finally {

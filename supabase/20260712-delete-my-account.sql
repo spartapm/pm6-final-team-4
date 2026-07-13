@@ -1,5 +1,5 @@
 -- Account deletion for F-01
--- Run after 20260712-disconnect-partner.sql (optional; independent)
+-- Prefer running 20260713-apply-account-rpcs.sql (includes disconnect + delete).
 
 create or replace function delete_my_account()
 returns void
@@ -16,7 +16,6 @@ begin
     raise exception 'not_authenticated';
   end if;
 
-  -- Detach from shared couples so the partner keeps chores/history
   for v_couple in
     select *
     from couples
@@ -43,16 +42,16 @@ begin
     end if;
   end loop;
 
-  -- Remove any remaining couples owned by this user (solo cycles cascade)
   delete from couples
   where user_a_id = v_uid
      or user_b_id = v_uid;
 
+  delete from invite_codes where created_by = v_uid or used_by = v_uid;
+  delete from letters where sender_id = v_uid or receiver_id = v_uid;
   delete from chore_templates where owner_id = v_uid;
   delete from notifications where user_id = v_uid;
   delete from profiles where user_id = v_uid;
 
-  -- Removes auth identity; related FKs cascade / set null per schema
   delete from auth.users where id = v_uid;
 end;
 $$;
