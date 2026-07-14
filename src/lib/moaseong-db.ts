@@ -880,3 +880,40 @@ export function mergeTemplatesIntoCatalog(templates: AppChoreTemplate[]): AppTas
     reacted: false,
   }));
 }
+
+/** A-06 반복 선택: 전체 템플릿 + 지난주 등록분 자동 체크(완료 여부 무관) */
+export function buildRepeatChoreCatalog(templates: AppChoreTemplate[], lastWeekTasks: AppTask[]): AppTask[] {
+  const lastWeekByTitle = new Map<string, AppTask>();
+  for (const task of lastWeekTasks) {
+    const title = task.title.trim();
+    if (!title || lastWeekByTitle.has(title)) continue;
+    lastWeekByTitle.set(title, task);
+  }
+  const lastTitles = new Set(lastWeekByTitle.keys());
+
+  const catalog = mergeTemplatesIntoCatalog(templates).map((task) => ({
+    ...task,
+    selected: lastTitles.has(task.title),
+    done: false,
+    reacted: false,
+  }));
+
+  const catalogTitles = new Set(catalog.map((task) => task.title));
+  const extras = [...lastWeekByTitle.values()]
+    .filter((task) => !catalogTitles.has(task.title.trim()))
+    .map((task) => {
+      const category = normalizeCategory(task.category);
+      return {
+        id: `prev-${task.id}`,
+        title: task.title.trim(),
+        category,
+        iconKey: task.iconKey ?? iconKeyForCategory(category),
+        assignee: "none" as const,
+        selected: true,
+        done: false,
+        reacted: false,
+      };
+    });
+
+  return [...catalog, ...extras];
+}

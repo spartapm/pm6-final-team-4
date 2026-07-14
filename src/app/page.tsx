@@ -85,6 +85,7 @@ import {
   AppReaction,
   AppTask,
   AppWeeklyStat,
+  buildRepeatChoreCatalog,
   closeWeeklyCycle,
   countCompletedWeekStreak,
   coupleHasWeeklyChores,
@@ -125,7 +126,6 @@ import {
   redeemInviteCode,
   replaceWeeklyChores,
   seedDefaultTemplates,
-  startNextWeekCycle,
   updateChoreTemplate,
   updateWeeklyChore,
   upsertWeeklyStats,
@@ -490,7 +490,7 @@ export default function Home() {
 
     const previousTasks = await loadPreviousCycleChores(coupleId, userId, partnerId);
     if (previousTasks.length > 0) {
-      setTasks(previousTasks);
+      setTasks(buildRepeatChoreCatalog(seeded, previousTasks));
       setChoreMode("repeat");
       return;
     }
@@ -1640,15 +1640,50 @@ export default function Home() {
 
   const finishWeekAndStartNext = async () => {
     if (!currentCoupleId) return;
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
     setIsSaving(true);
     try {
-      const range = closingWeekRange ?? currentWeekRange(-1);
-      const closingCycleId = await ensureCurrentCycleForWeek(currentCoupleId, range.weekStart, range.weekEnd);
+      const closedRange = closingWeekRange ?? currentWeekRange(-1);
+      const closingCycleId = await ensureCurrentCycleForWeek(
+        currentCoupleId,
+        closedRange.weekStart,
+        closedRange.weekEnd,
+      );
       await closeWeeklyCycle(closingCycleId);
-      const { cycleId, tasks: nextTasks } = await startNextWeekCycle(currentCoupleId, reportTasks.length ? reportTasks : tasks);
+
+      // 마감한 주가 이번 주면 다음 주로, 지난주면 이번 주(새 주기)로
+      const thisWeek = currentWeekRange(0);
+      const nextRange = closedRange.weekStart === thisWeek.weekStart
+        ? currentWeekRange(1)
+        : thisWeek;
+      const cycleId = await ensureCurrentCycleForWeek(
+        currentCoupleId,
+        nextRange.weekStart,
+        nextRange.weekEnd,
+      );
       setCurrentCycleId(cycleId);
-      setTasks(nextTasks);
+
+      const existing = await loadWeeklyChores(cycleId, userId, partnerId);
+      if (existing.length > 0) {
+        await loadCycleData(currentCoupleId, userId);
+        setScreen("home");
+        showAlert(
+          "알림",
+          "파트너가 이미 할 일을 설정하였어요. 이번 주 일을 같이 시작해보세요!",
+        );
+        return;
+      }
+
+      // 파트너 미설정: A-06에 전체 템플릿 + 지난주 등록분(완료 여부 무관) 자동 체크
+      const lastWeekTasks = await loadWeeklyChores(closingCycleId, userId, partnerId);
+      const seeded = await seedDefaultTemplates(userId);
+      setTemplates(seeded);
+      setTasks(buildRepeatChoreCatalog(seeded, lastWeekTasks));
       setChoreMode("repeat");
+      setWeeklyLetterStatus({ meSent: false, partnerSent: false, bothSent: false });
+      setIcebreakerPhrasesCache(null);
       setScreen("chores");
     } catch {
       showAlert("주기 전환 실패", "다음 주로 넘어가지 못했어요. 다시 시도해 주세요.");
