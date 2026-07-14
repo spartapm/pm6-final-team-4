@@ -336,6 +336,19 @@ export async function ensureCurrentCycleForWeek(coupleId: string, weekStart: str
   return data.id;
 }
 
+/** 조회만 (없으면 null). 마감 팝업 판별 시 빈 지난주 주기를 upsert 하지 않기 위함 */
+export async function getWeeklyCycleId(coupleId: string, weekStart: string) {
+  const { data, error } = await supabase
+    .from("weekly_cycles")
+    .select("id")
+    .eq("couple_id", coupleId)
+    .eq("week_start", weekStart)
+    .maybeSingle<{ id: string }>();
+
+  if (error) throw error;
+  return data?.id ?? null;
+}
+
 export async function coupleHasWeeklyChores(coupleId: string) {
   const cycleId = await ensureCurrentCycle(coupleId);
   const chores = await loadWeeklyChores(cycleId);

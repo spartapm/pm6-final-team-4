@@ -104,6 +104,7 @@ import {
   getCurrentCouple,
   getPartnerProfile,
   getProfile,
+  getWeeklyCycleId,
   getWeeklyLetterStatus,
   insertLetter,
   insertWeeklyChore,
@@ -354,8 +355,8 @@ export default function Home() {
     setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
   };
 
-  // v3: QA full wipe 이후 예전 pending/세션 잔여 방지
-  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:v3:${userId}:${weekStart}`;
+  // v4: 미참여 지난주 마감 팝업 오탐 방지 (온보딩/파트너 연결 직후)
+  const weekCloseStorageKey = (userId: string, weekStart: string) => `moaseong-week-close:v4:${userId}:${weekStart}`;
 
   const evaluateWeekClosePopup = useCallback(async (userId: string, coupleId: string | null, resolvedPartnerId: string | null = partnerId) => {
     if (!coupleId) {
@@ -370,14 +371,44 @@ export default function Home() {
     const previousEnd = new Date(`${previous.weekEnd}T00:00:00`);
     const weekEnded = today > previousEnd;
 
+    const couple = await getCurrentCouple();
+    const connectedAt = couple?.connected_at ? new Date(couple.connected_at) : null;
+    if (connectedAt) connectedAt.setHours(0, 0, 0, 0);
+
+    const clearPending = (weekStart: string) => {
+      window.localStorage.removeItem(weekCloseStorageKey(userId, weekStart));
+    };
+
     const tryShowForRange = async (range: { weekStart: string; weekEnd: string }) => {
-      const cycleId = await ensureCurrentCycleForWeek(coupleId, range.weekStart, range.weekEnd);
-      const letterStatus = await getWeeklyLetterStatus(cycleId, userId, resolvedPartnerId);
-      if (letterStatus.meSent) {
-        window.localStorage.removeItem(weekCloseStorageKey(userId, range.weekStart));
+      // 파트너 연결 전에 이미 끝난 주기는 마감 대상이 아님
+      if (connectedAt && couple?.user_b_id) {
+        const weekEndDate = new Date(`${range.weekEnd}T00:00:00`);
+        if (weekEndDate < connectedAt) {
+          clearPending(range.weekStart);
+          return false;
+        }
+      }
+
+      // 실제 존재하는 주기만 조회 (없으면 upsert 하지 않음)
+      const cycleId = await getWeeklyCycleId(coupleId, range.weekStart);
+      if (!cycleId) {
+        clearPending(range.weekStart);
         return false;
       }
+
       const weekChores = await loadWeeklyChores(cycleId, userId, resolvedPartnerId);
+      // 할 일 생성(=실제 참여)한 주기만 마감 팝업 대상
+      if (weekChores.length === 0) {
+        clearPending(range.weekStart);
+        return false;
+      }
+
+      const letterStatus = await getWeeklyLetterStatus(cycleId, userId, resolvedPartnerId);
+      if (letterStatus.meSent) {
+        clearPending(range.weekStart);
+        return false;
+      }
+
       const doneCount = weekChores.filter((task) => task.done).length;
       setClosingWeekProgress(calcWeekProgress(doneCount, weekChores.length, letterStatus));
       setClosingWeekTasks(weekChores);
@@ -393,7 +424,7 @@ export default function Home() {
         if (await tryShowForRange(current)) return;
       }
 
-      // 2) 주간 사이클 종료 후 첫 진입 / 재진입
+      // 2) 주간 사이클 종료 후 첫 진입 / 재진입 — 참여한 지난주만
       if (weekEnded || window.localStorage.getItem(weekCloseStorageKey(userId, previous.weekStart)) === "pending") {
         if (await tryShowForRange(previous)) return;
       }
