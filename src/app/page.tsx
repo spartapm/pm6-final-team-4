@@ -3083,7 +3083,7 @@ function HomeScreen({
             type="button"
             onClick={() => setDoneTab("partner")}
           >
-            파트너가 한 일
+            {subjectParticleName(partnerName)} 한 일
           </button>
         </div>
 
@@ -3293,6 +3293,7 @@ function LetterWriteScreen({
 }) {
   const meaningfulLength = body.replace(/\s/g, "").length;
   const canSend = meaningfulLength >= 1;
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
   const todayLabel = new Date().toLocaleDateString("ko-KR", {
     year: "numeric",
     month: "long",
@@ -3333,7 +3334,7 @@ function LetterWriteScreen({
         </span>
         <div>
           <em>받는 사람</em>
-          <strong>{partnerProfile?.nickname?.trim() || "파트너"}</strong>
+          <strong>{partnerName}</strong>
         </div>
         <AssetImage src={reactionHeartPink} alt="" />
       </div>
@@ -3346,7 +3347,7 @@ function LetterWriteScreen({
       <div className="instant-letter-card">
         <span className="instant-letter-date">{todayLabel}</span>
         <textarea
-          placeholder="파트너에게 마음을 담아 자유롭게 써봐요"
+          placeholder={`${partnerName}에게 마음을 담아 자유롭게 써봐요`}
           value={body}
           onChange={(event) => handleBodyChange(event.target.value)}
         />
@@ -3416,6 +3417,7 @@ function WeeklyLetterScreen({
   const meaningfulLength = body.replace(/\s/g, "").length;
   const canSend = meaningfulLength >= 1;
   const levelIndex = castleStageFromRate(progress) - 1;
+  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
 
   const handleBodyChange = (value: string) => {
     let kept = "";
@@ -3449,7 +3451,7 @@ function WeeklyLetterScreen({
           편지를 써서 성을 완성하세요!
           <span className="weekly-letter-title-icon"><AssetImage src={reactionLetter} alt="" /></span>
         </h2>
-        <p className="weekly-letter-subtitle">파트너에게 이번 주 고마움을 전해봐요</p>
+        <p className="weekly-letter-subtitle">{partnerName}에게 이번 주 고마움을 전해봐요</p>
 
         <div className="weekly-recipient-card" aria-readonly="true">
           <div className="weekly-recipient-main">
@@ -3458,7 +3460,7 @@ function WeeklyLetterScreen({
             </span>
             <div className="weekly-recipient-text">
               <em>받는 사람</em>
-              <strong>{partnerProfile?.nickname?.trim() || "파트너"}</strong>
+              <strong>{partnerName}</strong>
             </div>
             <AssetImage src={reactionHeartPink} alt="" />
           </div>
@@ -3471,7 +3473,7 @@ function WeeklyLetterScreen({
 
         <div className="weekly-letter-field">
           <textarea
-            placeholder="파트너에게 마음을 담아 자유롭게 써봐요"
+            placeholder={`${partnerName}에게 마음을 담아 자유롭게 써봐요`}
             value={body}
             onChange={(event) => handleBodyChange(event.target.value)}
           />
@@ -3966,7 +3968,7 @@ function StatsScreen({
   const partnerTasks = tasks.filter((task) => task.done && task.assignee === "partner");
   const summaryText = complete || progress >= 100
     ? `🎉 이번 주 집안일 100% 완료! 둘이 합쳐 ${completeCount}개를 해냈어요. 우리 집이 완공됐어요! 🏰`
-    : `🎉 이번 주 집안일 ${progress}% 완료! 둘이 함께 ${completeCount}개를 해냈어요. 파트너의 편지가 오면 우리 집을 완공해요 🏰`;
+    : `🎉 이번 주 집안일 ${progress}% 완료! 둘이 함께 ${completeCount}개를 해냈어요. ${partnerName}의 편지가 오면 우리 집을 완공해요 🏰`;
   const nextWeekSub = complete || progress >= 100
     ? "100% 완성! 다음 성도 지으러 가요"
     : "꾸준히 함께하고 있어요. 다음 주도 화이팅";
@@ -4011,7 +4013,7 @@ function StatsScreen({
           <div className="weekly-stat-card">
             <strong className="purple">{partnerPercent}%</strong>
             <em>{partnerDone}개</em>
-            <span>파트너</span>
+            <span>{partnerName}</span>
           </div>
         </div>
 
@@ -4036,7 +4038,7 @@ function StatsScreen({
             </div>
             <div>
               <i className="dot partner" />
-              <span>파트너</span>
+              <span>{partnerName}</span>
               <b className="bar partner" style={{ width: `${partnerPercent}%` }} />
               <em>{partnerDone}개 · {partnerPercent}%</em>
             </div>
@@ -4061,7 +4063,7 @@ function StatsScreen({
             </ul>
           </div>
           <div>
-            <h4><i className="dot partner" /> 파트너가 한 일</h4>
+            <h4><i className="dot partner" /> {subjectParticleName(partnerName)} 한 일</h4>
             <ul>
               {partnerTasks.length === 0 ? (
                 <li className="empty">완료한 일이 없어요</li>
@@ -4116,7 +4118,7 @@ function StatsScreen({
             <div className="weekly-letter-side">
               <span className="label">
                 <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-queen"} />
-                파트너가 쓴 편지
+                {subjectParticleName(partnerName)} 쓴 편지
               </span>
               {partnerLetter ? (
                 <button
@@ -4266,7 +4268,7 @@ function LettersScreen({
           onClick={() => setTab("partner")}
         >
           <AssetImage src={reactionHeartPurple} alt="" />
-          상대방이 보낸 편지
+          {subjectParticleName(partnerName)} 보낸 편지
         </button>
         <button
           className={tab === "me" ? "active" : ""}
