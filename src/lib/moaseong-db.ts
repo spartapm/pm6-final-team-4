@@ -842,28 +842,27 @@ export async function deleteChoreTemplate(templateId: string) {
 
 export async function seedDefaultTemplates(userId: string) {
   const existing = await loadChoreTemplates(userId);
-  if (existing.length > 0) return existing;
+  const existingKeys = new Set(
+    existing.map((item) => `${normalizeCategory(item.category)}::${item.title.trim()}`),
+  );
 
-  const rows = defaultTasks.map((task) => ({
-    owner_id: userId,
-    title: task.title,
-    category: task.category,
-  }));
+  const missing = defaultTasks.filter((task) => (
+    !existingKeys.has(`${normalizeCategory(task.category)}::${task.title.trim()}`)
+  ));
 
-  const { data, error } = await supabase
-    .from("chore_templates")
-    .insert(rows)
-    .select("id,title,category")
-    .returns<ChoreTemplateRow[]>();
+  if (missing.length === 0) return existing;
+
+  const { error } = await supabase.from("chore_templates").insert(
+    missing.map((task) => ({
+      owner_id: userId,
+      title: task.title,
+      category: task.category,
+    })),
+  );
 
   if (error) throw error;
 
-  return data.map((row) => ({
-    id: row.id,
-    title: row.title,
-    category: row.category,
-    iconKey: iconKeyForCategory(row.category),
-  }));
+  return loadChoreTemplates(userId);
 }
 
 export function mergeTemplatesIntoCatalog(templates: AppChoreTemplate[]): AppTask[] {
