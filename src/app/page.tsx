@@ -88,7 +88,6 @@ import {
   buildRepeatChoreCatalog,
   closeWeeklyCycle,
   countCompletedWeekStreak,
-  coupleHasWeeklyChores,
   createChoreTemplate,
   createInviteCode,
   createNotification,
