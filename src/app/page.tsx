@@ -1336,6 +1336,17 @@ export default function Home() {
     setScreen("chores");
   };
 
+  /** 온보딩 A-04: 연결 완료 후 할 일 유무에 따라 C-01 / A-06 */
+  const continueAfterPartnerCheck = async (coupleId: string, userId: string) => {
+    const taskCount = await loadCycleData(coupleId, userId);
+    if (taskCount > 0) {
+      setScreen("home");
+      return;
+    }
+    await prepareChoreSelection(coupleId, userId);
+    setScreen("chores");
+  };
+
   const handleInviteNext = async () => {
     if (inviteBusyRef.current || isSaving) return;
     const userId = await ensureSignedInUser();
@@ -1343,7 +1354,6 @@ export default function Home() {
     const fromSettings = inviteEntry === "settings";
 
     if (!inviteCode.trim() && !myCode) {
-      // 왼쪽: 나중에 할게요 → A-06 or F-01 / 오른쪽: 연결할게요 → A-04 유지
       showConfirm(
         "",
         "아직 코드를 생성하지 않았어요.\n연결을 나중에 할까요?",
@@ -1366,40 +1376,45 @@ export default function Home() {
     try {
       await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
 
+      // 파트너 코드 입력 → 즉시 연결
       if (inviteCode.trim()) {
         const coupleId = await redeemInviteCode(inviteCode.trim());
         const couple = await getCurrentCouple();
         syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
-        const hasPartnerTasks = await coupleHasWeeklyChores(coupleId);
-        await loadCycleData(coupleId, userId);
         setInviteCode("");
 
         if (fromSettings) {
+          await loadCycleData(coupleId, userId);
           showAlert("연결 완료", "파트너와 연결됐어요.");
           setScreen("mypage");
           return;
         }
 
-        if (hasPartnerTasks) {
-          setScreen("home");
-        } else {
-          // 왼쪽: 아니오 → 닫기 / 오른쪽: 네 → A-06
-          showConfirm(
-            "",
-            "파트너가 아직 할 일을 등록하지 않았어요.\n내가 먼저 등록 해볼까요?",
-            () => void proceedInviteToChores(),
-            "네",
-            "아니오",
-          );
-        }
-      } else if (fromSettings) {
-        // 내 코드만 있는 경우: 상대 입력 대기 — F-01로 복귀 (연결 상태 변경 없음)
-        setScreen("mypage");
-      } else {
-        const couple = await ensureCouple(userId);
-        syncCoupleState(userId, couple);
-        await proceedInviteToChores();
+        await continueAfterPartnerCheck(coupleId, userId);
+        return;
       }
+
+      // 내 코드만 있는 경우: 파트너가 이미 등록했는지 최신 상태 확인
+      const couple = await getCurrentCouple() ?? await ensureCouple(userId);
+      syncCoupleState(userId, couple);
+      const partnerConnected = Boolean(couple.user_b_id);
+
+      if (fromSettings) {
+        setScreen("mypage");
+        return;
+      }
+
+      if (partnerConnected) {
+        await continueAfterPartnerCheck(couple.id, userId);
+        return;
+      }
+
+      // 파트너 연결 미완료 (즉시 등록 전 / 시간차 등록 대기)
+      showAlert(
+        "알림",
+        "아직 할 일을 설정하지 않았어요. 지금 설정해볼까요?",
+        () => void proceedInviteToChores(),
+      );
     } catch (error) {
       const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
       showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
