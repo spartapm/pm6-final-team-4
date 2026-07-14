@@ -256,6 +256,7 @@ export default function Home() {
   const [isAuthResolving, setIsAuthResolving] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const isHandlingAuthRef = useRef(false);
+  const authBootstrappedUserRef = useRef<string | null>(null);
   const inviteBusyRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
@@ -531,9 +532,16 @@ export default function Home() {
 
   const completeSignedInFlow = useCallback(async (userId: string) => {
     if (isHandlingAuthRef.current) return;
-    isHandlingAuthRef.current = true;
 
     const authIntent = window.localStorage.getItem("moaseong-auth-intent");
+    // 이미 부트스트랩된 세션의 중복 SIGNED_IN/INITIAL_SESSION 은 화면을 가로채지 않음
+    // (A-04 대기 중 자동으로 할 일 설정 Alert 가 뜨던 문제 방지)
+    if (!authIntent && authBootstrappedUserRef.current === userId) {
+      setIsAuthResolving(false);
+      return;
+    }
+
+    isHandlingAuthRef.current = true;
     const profileDraft = getProfileDraft();
 
     let savedTaskCount = 0;
@@ -596,7 +604,8 @@ export default function Home() {
         setScreen("invite");
       } else if (savedTaskCount > 0) {
         setScreen("home");
-      } else {
+      } else if (authIntent === "login") {
+        // 기존 계정 로그인인데 할 일 미설정인 경우에만 Alert
         const couple = await ensureCouple(userId);
         syncCoupleState(userId, couple);
         await prepareChoreSelection(couple.id, userId);
@@ -604,12 +613,17 @@ export default function Home() {
         showAlert("알림", "아직 할 일을 설정하지 않았어요. 지금 설정해볼까요?", () => {
           void openChoreSelection();
         });
+      } else {
+        // 세션 복구/중복 이벤트: 온보딩 초대 화면 유지 (자동 Alert/전환 없음)
+        setInviteEntry("onboarding");
+        setScreen("invite");
       }
     } catch (error) {
       console.warn("Supabase data initialization failed after login.", error);
       setCurrentUserId(userId);
       setScreen("landing");
     } finally {
+      authBootstrappedUserRef.current = userId;
       if (window.location.hash || window.location.search) {
         window.history.replaceState({}, document.title, window.location.pathname);
       }
@@ -719,6 +733,7 @@ export default function Home() {
 
   const resetSessionToLanding = () => {
     clearMoaseongBrowserState();
+    authBootstrappedUserRef.current = null;
     setScreen("landing");
     setTasks([]);
     setLetters([]);
