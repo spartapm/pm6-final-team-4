@@ -249,6 +249,9 @@ export function parseInviteError(error: unknown) {
   if (message.includes("invalid_invite_code")) return "올바르지 않은 초대 코드예요.";
   if (message.includes("already_connected")) return "이미 연결된 코드예요.";
   if (message.includes("cannot_use_own_invite_code")) return "내 코드는 직접 사용할 수 없어요.";
+  if (message.includes("chores_conflict_needs_confirm")) {
+    return "파트너의 할 일 목록으로 변경하려면 확인이 필요해요.";
+  }
   return "초대 코드 처리에 실패했어요. 다시 시도해 주세요.";
 }
 
@@ -259,9 +262,30 @@ export function parseDisconnectError(error: unknown) {
   return "파트너 연결 해제에 실패했어요. 다시 시도해 주세요.";
 }
 
-export async function redeemInviteCode(code: string) {
+export type InviteConnectPreview = {
+  generator_has_chores: boolean;
+  enterer_has_chores: boolean;
+  needs_confirm: boolean;
+};
+
+export async function previewInviteConnect(code: string): Promise<InviteConnectPreview> {
+  const { data, error } = await supabase.rpc("preview_invite_connect", {
+    p_code: code,
+  });
+
+  if (error) throw error;
+  const raw = (data ?? {}) as Partial<InviteConnectPreview>;
+  return {
+    generator_has_chores: Boolean(raw.generator_has_chores),
+    enterer_has_chores: Boolean(raw.enterer_has_chores),
+    needs_confirm: Boolean(raw.needs_confirm),
+  };
+}
+
+export async function redeemInviteCode(code: string, confirmReplace = false) {
   const { data, error } = await supabase.rpc("redeem_invite_code", {
     p_code: code,
+    p_confirm_replace: confirmReplace,
   });
 
   if (error) throw error;

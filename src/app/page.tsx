@@ -122,6 +122,7 @@ import {
   parseDeleteAccountError,
   parseDisconnectError,
   parseInviteError,
+  previewInviteConnect,
   redeemInviteCode,
   replaceWeeklyChores,
   seedDefaultTemplates,
@@ -1259,18 +1260,78 @@ export default function Home() {
       showAlert("코드 입력", "파트너 초대 코드를 입력해 주세요.");
       return;
     }
+    void connectWithInviteCode(inviteCode.trim(), { fromSettings: true });
+  };
+
+  const connectWithInviteCode = async (
+    code: string,
+    options: { fromSettings: boolean; confirmReplace?: boolean },
+  ) => {
+    const userId = await ensureSignedInUser();
+    if (!userId) return;
+
+    const runRedeem = async (confirmReplace: boolean) => {
+      inviteBusyRef.current = true;
+      setIsSaving(true);
+      try {
+        await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
+        const coupleId = await redeemInviteCode(code, confirmReplace);
+        const couple = await getCurrentCouple();
+        syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
+        setInviteCode("");
+        await loadCycleData(coupleId, userId);
+
+        if (options.fromSettings) {
+          showAlert("연결 완료", "파트너와 연결됐어요.");
+          setScreen("mypage");
+          return;
+        }
+
+        await continueAfterPartnerCheck(coupleId, userId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("chores_conflict_needs_confirm")) {
+          showConfirm(
+            "파트너의 할 일 목록으로 변경할까요?",
+            "파트너와 연결하면 현재 설정한 이번 주 할 일은 삭제되고, 파트너가 설정한 할 일 목록으로 변경돼요.",
+            () => void runRedeem(true),
+            "연결하기",
+            "취소",
+          );
+          return;
+        }
+        const isNetworkError = !navigator.onLine || /network|fetch|Failed to fetch/i.test(message);
+        showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
+      } finally {
+        inviteBusyRef.current = false;
+        setIsSaving(false);
+      }
+    };
+
+    if (options.confirmReplace) {
+      await runRedeem(true);
+      return;
+    }
+
     setIsSaving(true);
     try {
-      const coupleId = await redeemInviteCode(inviteCode.trim());
-      const couple = await getCurrentCouple();
-      syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
-      await loadCycleData(coupleId, userId);
-      setInviteCode("");
-      showAlert("연결 완료", "파트너와 연결됐어요.");
+      const preview = await previewInviteConnect(code);
+      if (preview.needs_confirm) {
+        setIsSaving(false);
+        showConfirm(
+          "파트너의 할 일 목록으로 변경할까요?",
+          "파트너와 연결하면 현재 설정한 이번 주 할 일은 삭제되고, 파트너가 설정한 할 일 목록으로 변경돼요.",
+          () => void runRedeem(true),
+          "연결하기",
+          "취소",
+        );
+        return;
+      }
+      await runRedeem(false);
     } catch (error) {
-      showAlert("연결 실패", parseInviteError(error));
-    } finally {
       setIsSaving(false);
+      const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
+      showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
     }
   };
 
@@ -1390,21 +1451,11 @@ export default function Home() {
     try {
       await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
 
-      // 파트너 코드 입력 → 즉시 연결
+      // 파트너 코드 입력 → 즉시 연결 (F-01 할 일 병합 정책 포함)
       if (inviteCode.trim()) {
-        const coupleId = await redeemInviteCode(inviteCode.trim());
-        const couple = await getCurrentCouple();
-        syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
-        setInviteCode("");
-
-        if (fromSettings) {
-          await loadCycleData(coupleId, userId);
-          showAlert("연결 완료", "파트너와 연결됐어요.");
-          setScreen("mypage");
-          return;
-        }
-
-        await continueAfterPartnerCheck(coupleId, userId);
+        inviteBusyRef.current = false;
+        setIsSaving(false);
+        await connectWithInviteCode(inviteCode.trim(), { fromSettings });
         return;
       }
 
