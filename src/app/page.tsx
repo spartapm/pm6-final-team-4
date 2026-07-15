@@ -3,6 +3,7 @@
 import Image, { type StaticImageData } from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { trackEvent } from "@/lib/analytics";
 import avatarCream from "../../icons/avatar-cream.svg";
 import avatarCool from "../../icons/avatar-cool.svg";
 import avatarCrystal from "../../icons/avatar-crystal.svg";
@@ -259,6 +260,7 @@ export default function Home() {
   const isHandlingAuthRef = useRef(false);
   const authBootstrappedUserRef = useRef<string | null>(null);
   const inviteBusyRef = useRef(false);
+  const usedAiSuggestionRef = useRef(false);
   const [letters, setLetters] = useState<AppLetter[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
@@ -442,6 +444,15 @@ export default function Home() {
     }
   }, [screen, currentUserId, currentCoupleId, evaluateWeekClosePopup]);
 
+  useEffect(() => {
+    if (isAuthResolving) return;
+    if (screen === "chores") trackEvent("category_screen_viewed");
+    if (screen === "letters") trackEvent("calendar_viewed");
+    if (screen === "castle") trackEvent("castle_history_viewed");
+    if (screen === "stats") trackEvent("weekly_report_viewed");
+    if (screen === "weeklyLetter") trackEvent("weekly_praise_prompt_shown");
+  }, [screen, isAuthResolving]);
+
   const loadCycleData = async (coupleId: string, userId: string) => {
     const cycleId = await ensureCurrentCycle(coupleId);
     const couple = await getCurrentCouple();
@@ -603,6 +614,7 @@ export default function Home() {
       if (authIntent === "signup") {
         setInviteEntry("onboarding");
         setScreen("invite");
+        trackEvent("sign_up");
       } else if (savedTaskCount > 0) {
         setScreen("home");
       } else if (authIntent === "login") {
@@ -856,6 +868,7 @@ export default function Home() {
       setMyCode(code);
       syncCoupleState(userId, couple);
       setShowInviteCodeModal(true);
+      trackEvent("invite_code_created");
     } catch (error) {
       const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
       showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : "초대 코드 생성에 실패했어요. 다시 시도해 주세요.");
@@ -913,6 +926,7 @@ export default function Home() {
   };
 
   const completeHomeTask = (id: string) => {
+    trackEvent("todo_completed");
     void updateTask(id, { done: true });
   };
 
@@ -997,6 +1011,7 @@ export default function Home() {
       setTasks((current) => [...current, { ...created, category: nextCategory, iconKey: iconKeyForCategory(nextCategory) }]);
       setHomeAdding(false);
       setNewTask("");
+      trackEvent("todo_created", { count: 1, source: "home_add" });
     } catch {
       showAlert("추가 실패", "할 일 추가에 실패했어요. 다시 시도해 주세요.");
     }
@@ -1270,6 +1285,8 @@ export default function Home() {
     const userId = await ensureSignedInUser();
     if (!userId) return;
 
+    trackEvent("invite_code_entered");
+
     const runRedeem = async (confirmReplace: boolean) => {
       inviteBusyRef.current = true;
       setIsSaving(true);
@@ -1280,6 +1297,7 @@ export default function Home() {
         syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
         setInviteCode("");
         await loadCycleData(coupleId, userId);
+        trackEvent("partner_connected");
 
         if (options.fromSettings) {
           showAlert("연결 완료", "파트너와 연결됐어요.");
@@ -1392,6 +1410,10 @@ export default function Home() {
     try {
       const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
       setTasks(savedTasks);
+      trackEvent("todo_created", {
+        count: savedTasks.length,
+        source: choreMode === "first" ? "onboarding" : "weekly_select",
+      });
       goHome();
     } catch {
       showAlert("저장 실패", "이번 주 할 일 저장에 실패했어요. 다시 시도해 주세요.");
@@ -1541,6 +1563,19 @@ export default function Home() {
       setReaction("");
       setIcebreakerPhrasesCache(null);
 
+      const usedAi = usedAiSuggestionRef.current;
+      usedAiSuggestionRef.current = false;
+      trackEvent("letter_sent", {
+        trigger_context: weekly ? "weekly_required" : "free",
+        used_ai_suggestion: usedAi,
+      });
+      if (weekly) {
+        trackEvent("weekly_praise_created", {
+          trigger_context: "weekly_required",
+          used_ai_suggestion: usedAi,
+        });
+      }
+
       if (weekly && targetCycleId && currentCoupleId) {
         if (closingWeekRange) {
           window.localStorage.removeItem(weekCloseStorageKey(userId, closingWeekRange.weekStart));
@@ -1555,6 +1590,10 @@ export default function Home() {
         const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
         const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
         const complete = letterStatus.bothSent && weekProgress >= 100;
+        trackEvent("castle_stage_finalized", {
+          completion_rate: weekProgress,
+          both_letters_sent: letterStatus.bothSent,
+        });
         setStatsComplete(complete);
         setWeekStreak(await countCompletedWeekStreak(currentCoupleId));
         setClosingWeekProgress(weekProgress);
@@ -1647,6 +1686,7 @@ export default function Home() {
 
     try {
       await addChoreReaction(id, userId, reactionValue);
+      trackEvent("reaction_sent", { reaction: reactionValue });
       setReactions((current) => [
         {
           id: `local-${Date.now()}`,
@@ -1775,6 +1815,10 @@ export default function Home() {
   const openWeeklyReportFromCastle = (stat: AppWeeklyStat) => {
     void (async () => {
       if (!currentCoupleId || !currentUserId) return;
+      trackEvent("castle_history_card_clicked", {
+        week_start: stat.weekStart,
+        completion_rate: stat.completionRate,
+      });
 
       const meCount = stat.meCompletedCount;
       const partnerCount = stat.partnerCompletedCount;
@@ -2036,6 +2080,11 @@ export default function Home() {
             onSelectReaction={(reaction) => {
               setSelectedReaction(reaction);
               setSelectedLetter(null);
+            }}
+            onSelectDate={(year, month, day) => {
+              trackEvent("calendar_date_selected", {
+                date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+              });
             }}
           />
         );
@@ -2316,9 +2365,14 @@ export default function Home() {
           onPhrasesLoaded={setIcebreakerPhrasesCache}
           onClose={() => setShowIcebreakerAi(false)}
           onApply={(phrase) => {
+            usedAiSuggestionRef.current = true;
+            trackEvent("ai_suggestion_applied");
             setLetterBody((current) => appendIcebreakerPhrase(current, phrase));
             setShowIcebreakerAi(false);
           }}
+          onOpened={() => trackEvent("ai_suggestion_opened")}
+          onPerspectiveExpanded={(perspective) => trackEvent("ai_suggestion_expanded", { perspective })}
+          onFailed={() => trackEvent("ai_suggestion_failed")}
           showAlert={showAlert}
           showConfirm={showConfirm}
         />
@@ -3604,6 +3658,9 @@ function IcebreakerAiModal({
   onPhrasesLoaded,
   onClose,
   onApply,
+  onOpened,
+  onPerspectiveExpanded,
+  onFailed,
   showAlert,
   showConfirm,
 }: {
@@ -3614,6 +3671,9 @@ function IcebreakerAiModal({
   onPhrasesLoaded: (phrases: IcebreakerPhrases) => void;
   onClose: () => void;
   onApply: (phrase: string) => void;
+  onOpened?: () => void;
+  onPerspectiveExpanded?: (perspective: IcebreakerPerspective) => void;
+  onFailed?: () => void;
   showAlert: (title: string, message: string) => void;
   showConfirm: (
     title: string,
@@ -3646,6 +3706,11 @@ function IcebreakerAiModal({
   });
 
   useEffect(() => {
+    onOpened?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     if (cachedPhrases) {
       setPhrases(cachedPhrases);
       setLoading(false);
@@ -3673,6 +3738,7 @@ function IcebreakerAiModal({
       .catch(() => {
         if (cancelled) return;
         setLoading(false);
+        onFailed?.();
         showAlert("알림", "응답에 실패했습니다. 다시 시도해주세요.");
       });
     return () => {
@@ -3765,10 +3831,12 @@ function IcebreakerAiModal({
                         showAlert("알림", "응답에 실패했습니다. 다시 시도해주세요.");
                         return;
                       }
+                      const nextOpen = !expandedPerspectives[perspective];
                       setExpandedPerspectives((current) => ({
                         ...current,
-                        [perspective]: !current[perspective],
+                        [perspective]: nextOpen,
                       }));
+                      if (nextOpen) onPerspectiveExpanded?.(perspective);
                     }}
                   >
                     <span>{perspective}</span>
@@ -4189,6 +4257,7 @@ function LettersScreen({
   nickname,
   onSelectLetter,
   onSelectReaction,
+  onSelectDate,
 }: {
   letters: AppLetter[];
   reactions: AppReaction[];
@@ -4196,6 +4265,7 @@ function LettersScreen({
   nickname: string;
   onSelectLetter: (letter: AppLetter) => void;
   onSelectReaction: (reaction: AppReaction) => void;
+  onSelectDate?: (year: number, month: number, day: number) => void;
 }) {
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -4312,7 +4382,10 @@ function LettersScreen({
                 ].filter(Boolean).join(" ")}
                 key={day}
                 type="button"
-                onClick={() => setSelectedDay(day)}
+                onClick={() => {
+                  setSelectedDay(day);
+                  onSelectDate?.(viewYear, viewMonth, day);
+                }}
               >
                 <em>{day}</em>
                 {markers.length > 0 && (
