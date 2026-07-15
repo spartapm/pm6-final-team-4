@@ -3162,13 +3162,16 @@ h3 {
   text-align: center;
 }
 
+/* A-04: 성+배경 — 390 기준 width 372 (양옆 9px), 비율 1.5:1 */
 .home-castle {
+  --home-castle-side: 9px;
   position: relative;
+  width: calc(100% + (var(--space-page) - var(--home-castle-side)) * 2);
+  margin-inline: calc(var(--home-castle-side) - var(--space-page));
   overflow: hidden;
   border-radius: 20px;
-  background: linear-gradient(180deg, #f7d6e8, #e8d4f5 55%, #d9f2bd);
-  aspect-ratio: 1.15 / 1;
-  max-height: 280px;
+  background: transparent;
+  aspect-ratio: 1.5 / 1;
 }
 
 .home-castle-badge {
@@ -3205,17 +3208,19 @@ h3 {
 }
 
 .home-castle-visual {
-  display: grid;
-  place-items: center;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
-  padding: 28px 16px 12px;
+  padding: 0;
 }
 
 .home-castle-visual img {
-  width: 88%;
-  height: 88%;
-  object-fit: contain;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
 .home-section-head {

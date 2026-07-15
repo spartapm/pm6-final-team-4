@@ -4,6 +4,13 @@ import Image, { type StaticImageData } from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { trackEvent } from "@/lib/analytics";
+import {
+  castleLevel1,
+  castleLevel10,
+  castleLevelsForWeek,
+  castleSrcForWeek,
+  castleStageFromRate,
+} from "@/lib/castle-assets";
 import avatarCream from "../../icons/avatar-cream.svg";
 import avatarCool from "../../icons/avatar-cool.svg";
 import avatarCrystal from "../../icons/avatar-crystal.svg";
@@ -23,16 +30,6 @@ import bottomNavCalander from "../../icons/bottomNav-calander.svg";
 import bottomNavCastle from "../../icons/bottomNav-castle.svg";
 import bottomNavHome from "../../icons/bottomNav-home.svg";
 import bottomNavMypage from "../../icons/bottomNav-mypage.svg";
-import castleLevel1 from "../../castle_image/성1단계.svg";
-import castleLevel2 from "../../castle_image/성2단계.svg";
-import castleLevel3 from "../../castle_image/성3단계.svg";
-import castleLevel4 from "../../castle_image/성4단계.svg";
-import castleLevel5 from "../../castle_image/성5단계.svg";
-import castleLevel6 from "../../castle_image/성6단계.svg";
-import castleLevel7 from "../../castle_image/성7단계.svg";
-import castleLevel8 from "../../castle_image/성8단계.svg";
-import castleLevel9 from "../../castle_image/성9단계.svg";
-import castleLevel10 from "../../castle_image/성10단계.svg";
 import commonAi from "../../icons/common-ai.svg";
 import commonAlarm from "../../icons/common-alarm.svg";
 import commonCheckboxFilled from "../../icons/common-checkbox-filled.svg";
@@ -187,23 +184,6 @@ const avatarOptions = [
   { id: "avatar-queen", src: avatarQueen, label: "퀸" },
   { id: "avatar-laundry", src: avatarLaundry, label: "런드리" },
 ];
-
-const castleLevels = [
-  castleLevel1,
-  castleLevel2,
-  castleLevel3,
-  castleLevel4,
-  castleLevel5,
-  castleLevel6,
-  castleLevel7,
-  castleLevel8,
-  castleLevel9,
-  castleLevel10,
-];
-
-function castleStageFromRate(rate: number) {
-  return Math.min(10, Math.max(1, Math.floor(rate / 10) || 1));
-}
 
 function calcWeekProgress(
   doneCount: number,
@@ -2379,7 +2359,10 @@ export default function Home() {
       )}
 
       {showCastleUpgrade && (
-        <CastleUpgradeModal onClose={() => setShowCastleUpgrade(false)} />
+        <CastleUpgradeModal
+          weekStart={currentWeekRange().weekStart}
+          onClose={() => setShowCastleUpgrade(false)}
+        />
       )}
 
       {selectedLetter && (
@@ -3055,7 +3038,6 @@ function HomeScreen({
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
 
   const level = Math.min(10, Math.max(1, castleLevel || 1));
-  const levelIndex = level - 1;
   const doneMine = tasks.filter((task) => task.done && task.assignee === "me");
   const donePartner = tasks.filter((task) => task.done && task.assignee === "partner");
   const incomplete = tasks.filter((task) => !task.done);
@@ -3113,7 +3095,7 @@ function HomeScreen({
           <AssetImage src={commonInfo} alt="" />
         </button>
         <div className="home-castle-visual">
-          <AssetImage src={castleLevels[levelIndex]} alt={`${level}단계 성`} />
+          <AssetImage src={castleSrcForWeek(weekStart, progress)} alt={`${level}단계 성`} />
         </div>
       </section>
 
@@ -3298,14 +3280,16 @@ function CastleCard({
   progress,
   completeCount,
   total,
+  weekStart,
   onExplain,
 }: {
   progress: number;
   completeCount: number;
   total: number;
+  weekStart?: string;
   onExplain?: () => void;
 }) {
-  const castleSrc = castleLevels[castleStageFromRate(progress) - 1];
+  const castleSrc = castleSrcForWeek(weekStart, progress);
 
   return (
     <section className="castle-card">
@@ -3470,8 +3454,8 @@ function WeeklyLetterScreen({
 }) {
   const meaningfulLength = body.replace(/\s/g, "").length;
   const canSend = meaningfulLength >= 1;
-  const levelIndex = castleStageFromRate(progress) - 1;
   const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const castleSrc = castleSrcForWeek(weekStart, progress);
 
   const handleBodyChange = (value: string) => {
     let kept = "";
@@ -3497,7 +3481,7 @@ function WeeklyLetterScreen({
             <span>{formatWeekCloseBadge(weekStart, weekEnd)}</span>
           </div>
           <div className="week-close-castle weekly-letter-castle">
-            <AssetImage src={castleLevels[levelIndex]} alt="이번 주 성" />
+            <AssetImage src={castleSrc} alt="이번 주 성" />
           </div>
         </div>
 
@@ -3901,7 +3885,7 @@ function WeekClosePopup({
   progress: number;
   onWriteLetter: () => void;
 }) {
-  const levelIndex = castleStageFromRate(progress) - 1;
+  const castleSrc = castleSrcForWeek(weekStart, progress);
 
   return (
     <div className="week-close-overlay" role="presentation">
@@ -3912,7 +3896,7 @@ function WeekClosePopup({
             <span>{formatWeekCloseBadge(weekStart, weekEnd)}</span>
           </div>
           <div className="week-close-castle">
-            <AssetImage src={castleLevels[levelIndex]} alt="이번 주 성" />
+            <AssetImage src={castleSrc} alt="이번 주 성" />
           </div>
         </div>
 
@@ -4020,7 +4004,7 @@ function StatsScreen({
   isSaving: boolean;
 }) {
   const level = castleStageFromRate(progress);
-  const levelIndex = level - 1;
+  const castleSrc = castleSrcForWeek(weekStart, progress);
   const doneTotal = meDone + partnerDone;
   const mePercent = doneTotal === 0 ? 0 : Math.round((meDone / doneTotal) * 100);
   const partnerPercent = doneTotal === 0 ? 0 : 100 - mePercent;
@@ -4059,7 +4043,7 @@ function StatsScreen({
 
       <div className="weekly-report-scroll">
         <div className="weekly-report-castle">
-          <AssetImage src={castleLevels[levelIndex]} alt={`${level}단계 성`} />
+          <AssetImage src={castleSrc} alt={`${level}단계 성`} />
         </div>
 
         <div className="weekly-report-summary">
@@ -4630,7 +4614,7 @@ function CastleHistoryScreen({
               >
                 <div className="castle-history-visual">
                   <AssetImage
-                    src={castleLevels[castleStageFromRate(stat.completionRate) - 1]}
+                    src={castleSrcForWeek(stat.weekStart, stat.completionRate)}
                     alt={`${stat.completionRate}% 성`}
                   />
                   {waitingLetter && (
@@ -4674,7 +4658,16 @@ function CastleExplainScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
+function CastleUpgradeModal({
+  weekStart,
+  onClose,
+}: {
+  weekStart?: string;
+  onClose: () => void;
+}) {
+  const levels = castleLevelsForWeek(weekStart);
+  const finalLevel = levels[9] ?? castleLevel10;
+
   return (
     <div className="castle-upgrade-overlay" role="presentation" onClick={onClose}>
       <div
@@ -4687,7 +4680,7 @@ function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
         <div className="castle-upgrade-header">
           <h2 id="castle-upgrade-title">
             <span className="castle-upgrade-title-icon">
-              <AssetImage src={castleLevel10} alt="" />
+              <AssetImage src={finalLevel} alt="" />
             </span>
             성 업그레이드
           </h2>
@@ -4696,7 +4689,7 @@ function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
 
         <div className="castle-upgrade-stages">
           <div className="castle-upgrade-row">
-            {castleLevels.slice(0, 3).map((src, index) => (
+            {levels.slice(0, 3).map((src, index) => (
               <div className="castle-upgrade-stage" key={`stage-${index + 1}`}>
                 <AssetImage src={src} alt={`${index + 1}단계`} />
                 {index < 2 && <span className="castle-upgrade-arrow">›</span>}
@@ -4704,7 +4697,7 @@ function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="castle-upgrade-row">
-            {castleLevels.slice(3, 6).map((src, index) => (
+            {levels.slice(3, 6).map((src, index) => (
               <div className="castle-upgrade-stage" key={`stage-${index + 4}`}>
                 <AssetImage src={src} alt={`${index + 4}단계`} />
                 {index < 2 && <span className="castle-upgrade-arrow">›</span>}
@@ -4712,7 +4705,7 @@ function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="castle-upgrade-row">
-            {castleLevels.slice(6, 8).map((src, index) => (
+            {levels.slice(6, 8).map((src, index) => (
               <div className="castle-upgrade-stage" key={`stage-${index + 7}`}>
                 <AssetImage src={src} alt={`${index + 7}단계`} />
                 {index < 1 && <span className="castle-upgrade-arrow">›</span>}
@@ -4728,11 +4721,11 @@ function CastleUpgradeModal({ onClose }: { onClose: () => void }) {
             </div>
             <span className="castle-upgrade-arrow">›</span>
             <div className="castle-upgrade-stage">
-              <AssetImage src={castleLevels[8]} alt="9단계" />
+              <AssetImage src={levels[8]} alt="9단계" />
             </div>
             <span className="castle-upgrade-arrow">›</span>
             <div className="castle-upgrade-stage">
-              <AssetImage src={castleLevels[9]} alt="10단계" />
+              <AssetImage src={levels[9]} alt="10단계" />
             </div>
           </div>
         </div>
