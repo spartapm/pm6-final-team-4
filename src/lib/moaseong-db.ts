@@ -35,7 +35,7 @@ export type AppReaction = {
   date: string;
 };
 
-export type NotificationKind = "reminder" | "chore_done" | "letter" | "reaction" | "other";
+export type NotificationKind = "reminder" | "chore_done" | "letter" | "reaction" | "partner_connect" | "other";
 
 export type AppNotification = {
   id: string;
@@ -513,6 +513,7 @@ export async function addChoreReaction(taskId: string, userId: string, reaction:
 
 function inferNotificationKind(title: string, body: string): NotificationKind {
   const text = `${title} ${body}`;
+  if (/파트너 연결|연결 되었어요/.test(text)) return "partner_connect";
   if (/편지/.test(text)) return "letter";
   if (/리액션/.test(text)) return "reaction";
   if (/리마인드|절반|아직/.test(text)) return "reminder";

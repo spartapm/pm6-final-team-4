@@ -384,8 +384,137 @@ input[type="checkbox"] {
   accent-color: #8b5cf6;
 }
 
+.terms-link {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .profile-start {
   margin-top: auto;
+}
+
+/* A-02 이용약관 / 개인정보처리방침 */
+.legal-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+}
+
+.legal-topbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.legal-topbar h1 {
+  margin: 0;
+  color: #241b2f;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.legal-topbar-spacer {
+  width: 68px;
+}
+
+.legal-card {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: 18px;
+  background: #ffffff;
+  padding: 18px 16px 28px;
+  box-shadow: 0 8px 24px rgba(90, 70, 110, 0.06);
+}
+
+.legal-divider {
+  height: 1px;
+  margin: 28px 0;
+  background: #efe6f1;
+}
+
+.legal-markdown {
+  color: #3a3144;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.65;
+  letter-spacing: -0.02em;
+}
+
+.legal-markdown h2 {
+  margin: 0 0 14px;
+  color: #241b2f;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.legal-markdown h3 {
+  margin: 22px 0 10px;
+  color: #241b2f;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.legal-markdown h4 {
+  margin: 16px 0 8px;
+  color: #3a3144;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.legal-markdown p {
+  margin: 0 0 10px;
+}
+
+.legal-markdown ul,
+.legal-markdown ol {
+  margin: 0 0 12px;
+  padding-left: 1.2em;
+}
+
+.legal-markdown li {
+  margin-bottom: 4px;
+}
+
+.legal-markdown strong {
+  font-weight: 800;
+}
+
+.legal-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 14px;
+}
+
+.legal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.legal-table th,
+.legal-table td {
+  border: 1px solid #ebe1ef;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.legal-table th {
+  background: #faf6fb;
+  font-weight: 800;
+  color: #4a3544;
 }
 
 /* A-03 소셜 연동 */
@@ -735,6 +864,71 @@ input[type="checkbox"] {
   font-size: 13px;
   font-weight: 700;
   box-shadow: 0 10px 28px rgba(40, 30, 60, 0.22);
+}
+
+/* C-01 파트너 알림 토스트 (상단 슬라이드) */
+.alert-toast-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 130;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 28px);
+  max-width: 362px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #e4def3;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(90, 70, 120, 0.14);
+  transform: translateX(-50%);
+  animation: alert-toast-in 0.35s ease-out;
+  cursor: pointer;
+  text-align: left;
+}
+
+.alert-toast-banner strong {
+  flex: 1;
+  color: #3a3144;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+}
+
+.alert-toast-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #efe8ff;
+}
+
+.alert-toast-icon.chore_done { background: #e7f7ee; }
+.alert-toast-icon.letter { background: #fff0e4; }
+.alert-toast-icon.reaction { background: #ffe8f1; }
+.alert-toast-icon.partner_connect { background: #efe8ff; }
+
+.alert-toast-icon img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+@keyframes alert-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -16px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 /* A-06 할 일 선택 */
@@ -3135,31 +3329,14 @@ h3 {
   width: 40px;
   height: 40px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 14px;
   background: #fff4d8;
   cursor: pointer;
 }
 
 .home-bell img {
-  width: 22px;
-  height: 22px;
-}
-
-.home-bell em {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: #ff6b8a;
-  color: white;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 800;
-  line-height: 16px;
-  text-align: center;
+  width: 24px;
+  height: 24px;
 }
 
 /* A-04: 성+배경 — 390 기준 width 372 (양옆 9px), 비율 1.5:1 */
@@ -5203,14 +5380,16 @@ button.home-done-item.clickable:active {
   padding: 14px;
   border: 0;
   border-radius: 16px;
-  background: white;
+  background: #f3eefc;
   text-align: left;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(120, 80, 140, 0.05);
+  box-shadow: none;
 }
 
 .notif-card.read {
-  opacity: 0.92;
+  background: #ffffff;
+  opacity: 1;
+  box-shadow: 0 1px 6px rgba(120, 80, 140, 0.04);
 }
 
 .notif-dot {
@@ -5220,7 +5399,7 @@ button.home-done-item.clickable:active {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #ff5a7a;
+  background: #8a6fe4;
 }
 
 .notif-icon {

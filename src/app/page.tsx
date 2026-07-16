@@ -3,7 +3,7 @@
 import Image, { type StaticImageData } from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { trackEvent } from "@/lib/analytics";
+import { AI_PERSPECTIVE_TYPE, countTodoInputTypes, trackEvent } from "@/lib/analytics";
 import {
   castleLevel1,
   castleLevel10,
@@ -11,6 +11,23 @@ import {
   castleSrcForWeek,
   castleStageFromRate,
 } from "@/lib/castle-assets";
+import { PRIVACY_POLICY_MD, SERVICE_TERMS_MD } from "@/lib/legal-docs";
+import { MarkdownLite } from "@/lib/markdown-lite";
+import {
+  choreDoneNotifBody,
+  letterNotifBody,
+  ONBOARDING_SCREENS,
+  partnerConnectNotifBody,
+  parseReactionEmojiFromTitle,
+  reactionNotifBody,
+  reactionNotifTitle,
+} from "@/lib/notification-copy";
+import {
+  letterStatusFingerprint,
+  notificationsFingerprint,
+  QUIET_POLL_INTERVAL_MS,
+  tasksFingerprint,
+} from "@/lib/quiet-sync";
 import avatarCream from "../../icons/avatar-cream.svg";
 import avatarCool from "../../icons/avatar-cool.svg";
 import avatarCrystal from "../../icons/avatar-crystal.svg";
@@ -43,6 +60,7 @@ import commonEdit from "../../icons/common-edit.svg";
 import commonInfo from "../../icons/common-info.svg";
 import commonMailbox from "../../icons/common-mailbox.svg";
 import commonNotification from "../../icons/common-notification.svg";
+import commonNotificationTrue from "../../icons/common-notification-true.svg";
 import commonRefresh from "../../icons/common-refresh.svg";
 import commonShield from "../../icons/common-shield.svg";
 import commonStatistics from "../../icons/common-statistics.svg";
@@ -132,6 +150,7 @@ import {
 type Screen =
   | "landing"
   | "profile"
+  | "terms"
   | "social"
   | "login"
   | "invite"
@@ -241,6 +260,12 @@ export default function Home() {
   const authBootstrappedUserRef = useRef<string | null>(null);
   const inviteBusyRef = useRef(false);
   const usedAiSuggestionRef = useRef(false);
+  const categoryScreenTrackedRef = useRef(false);
+  const pollInFlightRef = useRef(false);
+  const localMutationRef = useRef(0);
+  const tasksFingerprintRef = useRef("");
+  const notificationsFingerprintRef = useRef("");
+  const letterStatusFingerprintRef = useRef("");
   const [letters, setLetters] = useState<AppLetter[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
@@ -261,6 +286,15 @@ export default function Home() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [showInviteCodeModal, setShowInviteCodeModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [lettersFocusAt, setLettersFocusAt] = useState<string | null>(null);
+  const [alertToast, setAlertToast] = useState<{
+    id: string;
+    message: string;
+    kind: AppNotification["kind"];
+    reactionEmoji?: string | null;
+  } | null>(null);
+  const knownNotifIdsRef = useRef<Set<string> | null>(null);
+  const alertToastTimerRef = useRef<number | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [inviteEntry, setInviteEntry] = useState<"onboarding" | "settings">("onboarding");
   const [choreMode, setChoreMode] = useState<"first" | "repeat">("first");
@@ -426,12 +460,16 @@ export default function Home() {
 
   useEffect(() => {
     if (isAuthResolving) return;
-    if (screen === "chores") trackEvent("category_screen_viewed");
-    if (screen === "letters") trackEvent("calendar_viewed");
-    if (screen === "castle") trackEvent("castle_history_viewed");
+    // 최초 회원가입(첫 할 일 설정) 진입 시에만 1회
+    if (screen === "chores" && choreMode === "first" && !categoryScreenTrackedRef.current) {
+      categoryScreenTrackedRef.current = true;
+      trackEvent("category_screen_viewed");
+    }
+    if (screen === "letters") trackEvent("calendar_viewed", { user_id: currentUserId });
+    if (screen === "castle") trackEvent("castle_history_viewed", { user_id: currentUserId });
     if (screen === "stats") trackEvent("weekly_report_viewed");
     if (screen === "weeklyLetter") trackEvent("weekly_praise_prompt_shown");
-  }, [screen, isAuthResolving]);
+  }, [screen, isAuthResolving, choreMode, currentUserId]);
 
   const loadCycleData = async (coupleId: string, userId: string) => {
     const cycleId = await ensureCurrentCycle(coupleId);
@@ -461,6 +499,10 @@ export default function Home() {
     setWeeklyLetterStatus(letterStatus);
     setWeekStreak(streak);
     setTemplates(seededTemplates);
+    tasksFingerprintRef.current = tasksFingerprint(savedTasks);
+    notificationsFingerprintRef.current = notificationsFingerprint(notifs);
+    letterStatusFingerprintRef.current = letterStatusFingerprint(letterStatus);
+    knownNotifIdsRef.current = new Set(notifs.map((item) => item.id));
     if (partner) setPartnerProfile(await getPartnerProfile(partner));
     else setPartnerProfile(null);
 
@@ -468,6 +510,137 @@ export default function Home() {
 
     return savedTasks.length;
   };
+
+  const beginLocalMutation = () => {
+    localMutationRef.current += 1;
+  };
+
+  const endLocalMutation = () => {
+    localMutationRef.current = Math.max(0, localMutationRef.current - 1);
+  };
+
+  const dismissAlertToast = useCallback(() => {
+    if (alertToastTimerRef.current) {
+      window.clearTimeout(alertToastTimerRef.current);
+      alertToastTimerRef.current = null;
+    }
+    setAlertToast(null);
+  }, []);
+
+  const showPartnerAlertToast = useCallback((item: AppNotification) => {
+    if (ONBOARDING_SCREENS.has(screen)) return;
+    if (screen === "notifications") return;
+
+    dismissAlertToast();
+    setAlertToast({
+      id: item.id,
+      message: item.body || item.title,
+      kind: item.kind,
+      reactionEmoji: parseReactionEmojiFromTitle(item.title),
+    });
+    alertToastTimerRef.current = window.setTimeout(() => {
+      setAlertToast(null);
+      alertToastTimerRef.current = null;
+    }, 3800);
+  }, [dismissAlertToast, screen]);
+
+  const ingestPolledNotifications = useCallback((notifs: AppNotification[]) => {
+    const nextNotifsKey = notificationsFingerprint(notifs);
+    const shouldUpdateList = nextNotifsKey !== notificationsFingerprintRef.current;
+    if (shouldUpdateList) {
+      notificationsFingerprintRef.current = nextNotifsKey;
+      setNotifications(notifs);
+    }
+
+    if (knownNotifIdsRef.current === null) {
+      knownNotifIdsRef.current = new Set(notifs.map((item) => item.id));
+      // 온보딩 직후 진입 등: 방금 도착한 미읽음은 토스트 1회 노출
+      const recentUnread = notifs.find((item) => {
+        if (item.read) return false;
+        const age = Date.now() - new Date(item.createdAt).getTime();
+        return Number.isFinite(age) && age >= 0 && age < 45_000;
+      });
+      if (recentUnread) showPartnerAlertToast(recentUnread);
+      return;
+    }
+
+    const fresh = notifs.filter((item) => !knownNotifIdsRef.current!.has(item.id));
+    for (const item of fresh) knownNotifIdsRef.current.add(item.id);
+    if (fresh.length > 0) {
+      // 최신순 정렬이므로 첫 항목이 가장 최근
+      showPartnerAlertToast(fresh[0]);
+    }
+  }, [showPartnerAlertToast]);
+
+  /** 홈/알림용 조용한 동기화 — 로딩 UI·ensureCycle·마감 팝업 없이 변경분만 반영 */
+  const quietSyncPartnerVisibleData = useCallback(async () => {
+    if (pollInFlightRef.current) return;
+    if (localMutationRef.current > 0) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    if (!currentUserId || !currentCycleId) return;
+
+    pollInFlightRef.current = true;
+    try {
+      const [savedTasks, notifs, letterStatus] = await Promise.all([
+        loadWeeklyChores(currentCycleId, currentUserId, partnerId),
+        loadNotifications(currentUserId),
+        getWeeklyLetterStatus(currentCycleId, currentUserId, partnerId),
+      ]);
+
+      // 요청 중에 로컬 변경이 있으면 덮어쓰지 않음
+      if (localMutationRef.current > 0) return;
+
+      const nextTasksKey = tasksFingerprint(savedTasks);
+      if (nextTasksKey !== tasksFingerprintRef.current) {
+        tasksFingerprintRef.current = nextTasksKey;
+        setTasks(savedTasks);
+      }
+
+      ingestPolledNotifications(notifs);
+
+      const nextLetterKey = letterStatusFingerprint(letterStatus);
+      if (nextLetterKey !== letterStatusFingerprintRef.current) {
+        letterStatusFingerprintRef.current = nextLetterKey;
+        setWeeklyLetterStatus(letterStatus);
+      }
+    } catch {
+      // 폴링 실패는 UI/로딩에 영향 주지 않음
+    } finally {
+      pollInFlightRef.current = false;
+    }
+  }, [currentCycleId, currentUserId, ingestPolledNotifications, partnerId]);
+
+  useEffect(() => {
+    const shouldPoll = Boolean(
+      currentUserId
+      && currentCycleId
+      && !isAuthResolving
+      && !ONBOARDING_SCREENS.has(screen),
+    );
+    if (!shouldPoll) return;
+
+    let cancelled = false;
+
+    const tick = () => {
+      if (cancelled) return;
+      void quietSyncPartnerVisibleData();
+    };
+
+    // 화면 진입 직후 1회 + 이후 주기 폴링
+    tick();
+    const timerId = window.setInterval(tick, QUIET_POLL_INTERVAL_MS);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timerId);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [screen, currentUserId, currentCycleId, isAuthResolving, quietSyncPartnerVisibleData]);
 
   const prepareChoreSelection = async (coupleId: string, userId: string) => {
     const seeded = await seedDefaultTemplates(userId);
@@ -727,6 +900,9 @@ export default function Home() {
   const resetSessionToLanding = () => {
     clearMoaseongBrowserState();
     authBootstrappedUserRef.current = null;
+    categoryScreenTrackedRef.current = false;
+    knownNotifIdsRef.current = null;
+    dismissAlertToast();
     setScreen("landing");
     setTasks([]);
     setLetters([]);
@@ -874,10 +1050,18 @@ export default function Home() {
       ...(patch.done === true ? { assignee: "me" as const } : {}),
       ...(patch.done === false ? { assignee: "none" as const } : {}),
     };
-    setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...localPatch } : task)));
+    beginLocalMutation();
+    setTasks((current) => {
+      const next = current.map((task) => (task.id === id ? { ...task, ...localPatch } : task));
+      tasksFingerprintRef.current = tasksFingerprint(next);
+      return next;
+    });
 
     const userId = await ensureSignedInUser();
-    if (!userId || !isPersistedId(id)) return;
+    if (!userId || !isPersistedId(id)) {
+      endLocalMutation();
+      return;
+    }
 
     try {
       await updateWeeklyChore(id, userId, {
@@ -891,7 +1075,7 @@ export default function Home() {
             userId: partnerId,
             choreId: id,
             title: "집안일 완료 알림",
-            body: `${nickname || "파트너"}님이 '${task?.title ?? "할 일"}'을(를) 완료했어요.`,
+            body: choreDoneNotifBody(nickname, task?.title ?? "할 일"),
           });
         } catch {
           // 알림 실패는 완료 저장 성공을 막지 않음
@@ -899,14 +1083,20 @@ export default function Home() {
       }
     } catch {
       if (previous) {
-        setTasks((current) => current.map((task) => (task.id === id ? previous : task)));
+        setTasks((current) => {
+          const next = current.map((task) => (task.id === id ? previous : task));
+          tasksFingerprintRef.current = tasksFingerprint(next);
+          return next;
+        });
       }
       showAlert("저장 실패", "할 일 저장에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      endLocalMutation();
     }
   };
 
   const completeHomeTask = (id: string) => {
-    trackEvent("todo_completed");
+    trackEvent("todo_completed", { user_id: currentUserId });
     void updateTask(id, { done: true });
   };
 
@@ -922,36 +1112,64 @@ export default function Home() {
     }
 
     const previous = tasks.find((task) => task.id === id)?.title;
-    setTasks((current) => current.map((task) => (task.id === id ? { ...task, title: nextTitle } : task)));
+    beginLocalMutation();
+    setTasks((current) => {
+      const next = current.map((task) => (task.id === id ? { ...task, title: nextTitle } : task));
+      tasksFingerprintRef.current = tasksFingerprint(next);
+      return next;
+    });
 
-    if (!isPersistedId(id)) return true;
+    if (!isPersistedId(id)) {
+      endLocalMutation();
+      return true;
+    }
 
     const userId = await ensureSignedInUser();
-    if (!userId) return false;
+    if (!userId) {
+      endLocalMutation();
+      return false;
+    }
 
     try {
       await updateWeeklyChore(id, userId, { title: nextTitle });
       return true;
     } catch {
       if (previous) {
-        setTasks((current) => current.map((task) => (task.id === id ? { ...task, title: previous } : task)));
+        setTasks((current) => {
+          const next = current.map((task) => (task.id === id ? { ...task, title: previous } : task));
+          tasksFingerprintRef.current = tasksFingerprint(next);
+          return next;
+        });
       }
       showAlert("저장 실패", "할 일 수정에 실패했어요. 다시 시도해 주세요.");
       return false;
+    } finally {
+      endLocalMutation();
     }
   };
 
   const deleteHomeTask = async (id: string) => {
     const previous = tasks;
-    setTasks((current) => current.filter((task) => task.id !== id));
+    beginLocalMutation();
+    setTasks((current) => {
+      const next = current.filter((task) => task.id !== id);
+      tasksFingerprintRef.current = tasksFingerprint(next);
+      return next;
+    });
 
-    if (!isPersistedId(id)) return;
+    if (!isPersistedId(id)) {
+      endLocalMutation();
+      return;
+    }
 
     try {
       await deleteWeeklyChore(id);
     } catch {
       setTasks(previous);
+      tasksFingerprintRef.current = tasksFingerprint(previous);
       showAlert("삭제 실패", "할 일 삭제에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      endLocalMutation();
     }
   };
 
@@ -975,6 +1193,7 @@ export default function Home() {
     const userId = await ensureSignedInUser();
     if (!userId) return;
 
+    beginLocalMutation();
     try {
       let cycleId = currentCycleId;
       if (!cycleId) {
@@ -988,12 +1207,24 @@ export default function Home() {
 
       const nextCategory = normalizeCategory(category);
       const created = await insertWeeklyChore(cycleId, nextTitle, nextCategory);
-      setTasks((current) => [...current, { ...created, category: nextCategory, iconKey: iconKeyForCategory(nextCategory) }]);
+      setTasks((current) => {
+        const next = [...current, { ...created, category: nextCategory, iconKey: iconKeyForCategory(nextCategory) }];
+        tasksFingerprintRef.current = tasksFingerprint(next);
+        return next;
+      });
       setHomeAdding(false);
       setNewTask("");
-      trackEvent("todo_created", { count: 1, source: "home_add" });
+      trackEvent("todo_created", {
+        user_id: userId,
+        todo_count: 1,
+        template_count: 0,
+        manual_count: 1,
+        source: "home_add",
+      });
     } catch {
       showAlert("추가 실패", "할 일 추가에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      endLocalMutation();
     }
   };
 
@@ -1075,26 +1306,38 @@ export default function Home() {
   const handleNotificationOpen = async (notification: AppNotification) => {
     try {
       if (!notification.read) {
-        await markNotificationRead(notification.id);
-        setNotifications((current) => current.map((item) => (
-          item.id === notification.id ? { ...item, read: true } : item
-        )));
+        beginLocalMutation();
+        try {
+          await markNotificationRead(notification.id);
+          setNotifications((current) => {
+            const next = current.map((item) => (
+              item.id === notification.id ? { ...item, read: true } : item
+            ));
+            notificationsFingerprintRef.current = notificationsFingerprint(next);
+            return next;
+          });
+        } finally {
+          endLocalMutation();
+        }
       }
     } catch {
       // 읽음 처리 실패는 이동을 막지 않습니다.
     }
 
-    if (notification.kind === "letter") {
-      const partnerLetter = letters.find((letter) => letter.from === "partner");
-      if (partnerLetter) {
-        setSelectedLetter(partnerLetter);
-        setSelectedReaction(null);
-        return;
-      }
+    // 파트너 연결: 읽음만, 화면 이동 없음
+    if (notification.kind === "partner_connect") return;
+
+    // 편지/리액션: D-01 편지 화면 + 해당 날짜 선택
+    if (notification.kind === "letter" || notification.kind === "reaction") {
+      setLettersFocusAt(notification.createdAt);
+      setSelectedLetter(null);
+      setSelectedReaction(null);
       setScreen("letters");
       return;
     }
 
+    // 할 일 완료 등: C-01 홈
+    setLettersFocusAt(null);
     setScreen("home");
   };
 
@@ -1104,11 +1347,18 @@ export default function Home() {
     const hasUnread = notifications.some((item) => !item.read);
     if (!hasUnread) return;
 
+    beginLocalMutation();
     try {
       await markAllNotificationsRead(userId);
-      setNotifications((current) => current.map((item) => ({ ...item, read: true })));
+      setNotifications((current) => {
+        const next = current.map((item) => ({ ...item, read: true }));
+        notificationsFingerprintRef.current = notificationsFingerprint(next);
+        return next;
+      });
     } catch {
       showAlert("알림", "모두 읽음 처리에 실패했어요. 다시 시도해 주세요.");
+    } finally {
+      endLocalMutation();
     }
   };
 
@@ -1279,6 +1529,22 @@ export default function Home() {
         await loadCycleData(coupleId, userId);
         trackEvent("partner_connected");
 
+        // 코드 생성자(상대)에게 파트너 연결 알림
+        const inviteOwnerId = couple
+          ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
+          : null;
+        if (inviteOwnerId) {
+          try {
+            await createNotification({
+              userId: inviteOwnerId,
+              title: "파트너 연결 알림",
+              body: partnerConnectNotifBody(nickname),
+            });
+          } catch {
+            // 알림 실패는 연결 성공을 막지 않음
+          }
+        }
+
         if (options.fromSettings) {
           showAlert("연결 완료", "파트너와 연결됐어요.");
           setScreen("mypage");
@@ -1390,8 +1656,12 @@ export default function Home() {
     try {
       const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
       setTasks(savedTasks);
+      const inputCounts = countTodoInputTypes(choreSelectionTasks.filter((task) => task.selected));
       trackEvent("todo_created", {
-        count: savedTasks.length,
+        user_id: context.userId,
+        todo_count: inputCounts.todo_count,
+        template_count: inputCounts.template_count,
+        manual_count: inputCounts.manual_count,
         source: choreMode === "first" ? "onboarding" : "weekly_select",
       });
       goHome();
@@ -1543,10 +1813,23 @@ export default function Home() {
       setReaction("");
       setIcebreakerPhrasesCache(null);
 
+      if (partnerId && notificationEnabled) {
+        try {
+          await createNotification({
+            userId: partnerId,
+            title: "편지 알림",
+            body: letterNotifBody(nickname),
+          });
+        } catch {
+          // 알림 실패는 편지 전송 성공을 막지 않음
+        }
+      }
+
       const usedAi = usedAiSuggestionRef.current;
       usedAiSuggestionRef.current = false;
       trackEvent("letter_sent", {
-        trigger_context: weekly ? "weekly_required" : "free",
+        user_id: userId,
+        letter_type: weekly ? "forced" : "voluntary",
         used_ai_suggestion: usedAi,
       });
       if (weekly) {
@@ -1572,6 +1855,7 @@ export default function Home() {
         const complete = letterStatus.bothSent && weekProgress >= 100;
         trackEvent("castle_stage_finalized", {
           completion_rate: weekProgress,
+          castle_stage: castleStageFromRate(weekProgress),
           both_letters_sent: letterStatus.bothSent,
         });
         setStatsComplete(complete);
@@ -1659,14 +1943,22 @@ export default function Home() {
     const task = tasks.find((item) => item.id === id);
     if (!task || task.reacted) return;
 
-    setTasks((current) => current.map((item) => (item.id === id ? { ...item, reacted: true } : item)));
+    beginLocalMutation();
+    setTasks((current) => {
+      const next = current.map((item) => (item.id === id ? { ...item, reacted: true } : item));
+      tasksFingerprintRef.current = tasksFingerprint(next);
+      return next;
+    });
 
     const userId = await ensureSignedInUser();
-    if (!userId || !isPersistedId(id)) return;
+    if (!userId || !isPersistedId(id)) {
+      endLocalMutation();
+      return;
+    }
 
     try {
       await addChoreReaction(id, userId, reactionValue);
-      trackEvent("reaction_sent", { reaction: reactionValue });
+      trackEvent("reaction_sent", { user_id: userId, reaction: reactionValue });
       setReactions((current) => [
         {
           id: `local-${Date.now()}`,
@@ -1683,16 +1975,22 @@ export default function Home() {
           await createNotification({
             userId: partnerId,
             choreId: id,
-            title: "리액션 알림",
-            body: `${nickname || "파트너"}님이 '${task.title}'에 리액션을 보냈어요.`,
+            title: reactionNotifTitle(reactionValue),
+            body: reactionNotifBody(nickname, task.title),
           });
         } catch {
           // 리액션 저장 성공 후 알림 실패는 롤백하지 않음
         }
       }
     } catch {
-      setTasks((current) => current.map((item) => (item.id === id ? { ...item, reacted: false } : item)));
+      setTasks((current) => {
+        const next = current.map((item) => (item.id === id ? { ...item, reacted: false } : item));
+        tasksFingerprintRef.current = tasksFingerprint(next);
+        return next;
+      });
       showToast("전송에 실패했어요.");
+    } finally {
+      endLocalMutation();
     }
   };
 
@@ -1796,6 +2094,7 @@ export default function Home() {
     void (async () => {
       if (!currentCoupleId || !currentUserId) return;
       trackEvent("castle_history_card_clicked", {
+        user_id: currentUserId,
         week_start: stat.weekStart,
         completion_rate: stat.completionRate,
       });
@@ -1885,10 +2184,13 @@ export default function Home() {
             onEmojiChange={setSelectedEmoji}
             agreedToTerms={agreedToTerms}
             onTermsChange={setAgreedToTerms}
+            onOpenTerms={() => setScreen("terms")}
             onBack={() => setScreen("landing")}
             onNext={handleProfileNext}
           />
         );
+      case "terms":
+        return <TermsPolicyScreen onBack={() => setScreen("profile")} />;
       case "social":
         return (
           <SocialSignupScreen
@@ -2053,6 +2355,7 @@ export default function Home() {
             reactions={reactions}
             partnerProfile={partnerProfile}
             nickname={nickname}
+            focusAt={lettersFocusAt}
             onSelectLetter={(letter) => {
               setSelectedLetter(letter);
               setSelectedReaction(null);
@@ -2062,7 +2365,9 @@ export default function Home() {
               setSelectedLetter(null);
             }}
             onSelectDate={(year, month, day) => {
+              setLettersFocusAt(null);
               trackEvent("calendar_date_selected", {
+                user_id: currentUserId,
                 date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
               });
             }}
@@ -2094,6 +2399,7 @@ export default function Home() {
             onDisconnectPartner={() => void disconnectPartnerAndReset()}
             onLogout={() => void handleLogout()}
             onDeleteAccount={() => void handleDeleteAccount()}
+            onCloseWeek={() => void closeWeek()}
             showConfirm={showConfirm}
             showAlert={showAlert}
           />
@@ -2102,6 +2408,7 @@ export default function Home() {
         return (
           <NotificationsScreen
             notifications={notifications}
+            partnerProfile={partnerProfile}
             onBack={goHome}
             onMarkAll={() => void handleMarkAllNotificationsRead()}
             onOpen={(item) => void handleNotificationOpen(item)}
@@ -2172,7 +2479,6 @@ export default function Home() {
             partnerProfile={partnerProfile}
             onComplete={completeHomeTask}
             onUncomplete={uncompleteHomeTask}
-            onCloseWeek={() => void closeWeek()}
             onReact={requestReact}
             onWriteLetter={() => setScreen("letter")}
             onRename={(id, title) => renameHomeTask(id, title)}
@@ -2210,8 +2516,43 @@ export default function Home() {
                   ? "home"
                   : screen
             }
-            onChange={setScreen}
+            onChange={(next) => {
+              if (next === "letters") setLettersFocusAt(null);
+              setScreen(next);
+            }}
           />
+        )}
+
+        {alertToast && !ONBOARDING_SCREENS.has(screen) && (
+          <button
+            className="alert-toast-banner"
+            type="button"
+            onClick={() => {
+              dismissAlertToast();
+              setScreen("notifications");
+            }}
+          >
+            <span className={`alert-toast-icon ${alertToast.kind}`}>
+              {alertToast.kind === "partner_connect" ? (
+                <AvatarMark value={resolveAvatarId(partnerProfile?.avatarEmoji)} />
+              ) : alertToast.kind === "reaction" ? (
+                <AssetImage
+                  src={
+                    reactionOptions.find((item) => item.value === alertToast.reactionEmoji)?.src
+                    ?? reactionLike
+                  }
+                  alt=""
+                />
+              ) : alertToast.kind === "letter" ? (
+                <AssetImage src={reactionLetter} alt="" />
+              ) : alertToast.kind === "chore_done" ? (
+                <AssetImage src={commonCheckboxFilled} alt="" />
+              ) : (
+                <AssetImage src={commonNotification} alt="" />
+              )}
+            </span>
+            <strong>{alertToast.message}</strong>
+          </button>
         )}
       </section>
 
@@ -2346,12 +2687,14 @@ export default function Home() {
           onClose={() => setShowIcebreakerAi(false)}
           onApply={(phrase) => {
             usedAiSuggestionRef.current = true;
-            trackEvent("ai_suggestion_applied");
+            trackEvent("ai_suggestion_applied", { user_id: currentUserId });
             setLetterBody((current) => appendIcebreakerPhrase(current, phrase));
             setShowIcebreakerAi(false);
           }}
           onOpened={() => trackEvent("ai_suggestion_opened")}
-          onPerspectiveExpanded={(perspective) => trackEvent("ai_suggestion_expanded", { perspective })}
+          onPerspectiveExpanded={(perspective) => trackEvent("ai_suggestion_expanded", {
+            perspective_type: AI_PERSPECTIVE_TYPE[perspective],
+          })}
           onFailed={() => trackEvent("ai_suggestion_failed")}
           showAlert={showAlert}
           showConfirm={showConfirm}
@@ -2458,6 +2801,7 @@ function ProfileScreen({
   onEmojiChange,
   agreedToTerms,
   onTermsChange,
+  onOpenTerms,
   onBack,
   onNext,
 }: {
@@ -2467,6 +2811,7 @@ function ProfileScreen({
   onEmojiChange: (value: string) => void;
   agreedToTerms: boolean;
   onTermsChange: (value: boolean) => void;
+  onOpenTerms: () => void;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -2518,7 +2863,16 @@ function ProfileScreen({
 
       <label className="terms-check">
         <input type="checkbox" checked={agreedToTerms} onChange={(event) => onTermsChange(event.target.checked)} />
-        <span>이용약관 및 개인정보처리방침에 동의합니다.(필수)</span>
+        <button
+          type="button"
+          className="terms-link"
+          onClick={(event) => {
+            event.preventDefault();
+            onOpenTerms();
+          }}
+        >
+          이용약관 및 개인정보처리방침에 동의합니다.(필수)
+        </button>
       </label>
 
       <button
@@ -2529,6 +2883,23 @@ function ProfileScreen({
       >
         시작하기
       </button>
+    </div>
+  );
+}
+
+function TermsPolicyScreen({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="legal-screen">
+      <div className="legal-topbar">
+        <BackChip onClick={onBack} />
+        <h1>이용약관 및 개인정보처리방침</h1>
+        <span className="legal-topbar-spacer" aria-hidden />
+      </div>
+      <div className="legal-card">
+        <MarkdownLite source={SERVICE_TERMS_MD} />
+        <div className="legal-divider" />
+        <MarkdownLite source={PRIVACY_POLICY_MD} />
+      </div>
     </div>
   );
 }
@@ -3003,7 +3374,6 @@ function HomeScreen({
   partnerProfile,
   onComplete,
   onUncomplete,
-  onCloseWeek,
   onReact,
   onWriteLetter,
   onRename,
@@ -3022,7 +3392,6 @@ function HomeScreen({
   partnerProfile: AppPartnerProfile | null;
   onComplete: (id: string) => void;
   onUncomplete: (id: string) => void;
-  onCloseWeek: () => void;
   onReact: (id: string, title: string, reactionValue: string, reactionLabel: string) => void;
   onWriteLetter: () => void;
   onRename: (id: string, title: string) => Promise<boolean>;
@@ -3084,8 +3453,7 @@ function HomeScreen({
           <span>{formatHomeWeekRange(weekStart, weekEnd)}</span>
         </div>
         <button className="home-bell" aria-label="알림" type="button" onClick={onNotifications}>
-          <AssetImage src={commonNotification} alt="" />
-          {unreadCount > 0 && <em>{unreadCount}</em>}
+          <AssetImage src={unreadCount > 0 ? commonNotificationTrue : commonNotification} alt="" />
         </button>
       </header>
 
@@ -3268,10 +3636,6 @@ function HomeScreen({
           })
         )}
       </section>
-
-      <button className="home-close-week-button" type="button" onClick={onCloseWeek}>
-        주기 마감하기
-      </button>
     </div>
   );
 }
@@ -4239,6 +4603,7 @@ function LettersScreen({
   reactions,
   partnerProfile,
   nickname,
+  focusAt,
   onSelectLetter,
   onSelectReaction,
   onSelectDate,
@@ -4247,15 +4612,28 @@ function LettersScreen({
   reactions: AppReaction[];
   partnerProfile: AppPartnerProfile | null;
   nickname: string;
+  focusAt?: string | null;
   onSelectLetter: (letter: AppLetter) => void;
   onSelectReaction: (reaction: AppReaction) => void;
   onSelectDate?: (year: number, month: number, day: number) => void;
 }) {
   const today = new Date();
-  const [viewYear, setViewYear] = useState(today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(today.getMonth());
-  const [selectedDay, setSelectedDay] = useState(today.getDate());
+  const focusDate = focusAt ? new Date(focusAt) : null;
+  const focusValid = focusDate && !Number.isNaN(focusDate.getTime()) ? focusDate : null;
+  const [viewYear, setViewYear] = useState(focusValid?.getFullYear() ?? today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(focusValid?.getMonth() ?? today.getMonth());
+  const [selectedDay, setSelectedDay] = useState(focusValid?.getDate() ?? today.getDate());
   const [tab, setTab] = useState<"partner" | "me">("partner");
+
+  useEffect(() => {
+    if (!focusAt) return;
+    const next = new Date(focusAt);
+    if (Number.isNaN(next.getTime())) return;
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    setSelectedDay(next.getDate());
+    setTab("partner");
+  }, [focusAt]);
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const startWeekday = new Date(viewYear, viewMonth, 1).getDay();
@@ -4757,6 +5135,7 @@ function MyPageScreen({
   onDisconnectPartner,
   onLogout,
   onDeleteAccount,
+  onCloseWeek,
   showConfirm,
   showAlert,
 }: {
@@ -4771,6 +5150,7 @@ function MyPageScreen({
   onDisconnectPartner: () => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
+  onCloseWeek: () => void;
   showConfirm: (
     title: string,
     message: string,
@@ -5027,6 +5407,10 @@ function MyPageScreen({
           회원 탈퇴
         </button>
       </div>
+
+      <button className="home-close-week-button" type="button" onClick={onCloseWeek}>
+        주기 마감하기(테스트용)
+      </button>
     </div>
   );
 }
@@ -5149,8 +5533,6 @@ function formatNotificationTime(createdAt: string) {
 
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startYesterday = new Date(startToday);
-  startYesterday.setDate(startToday.getDate() - 1);
 
   const hours = date.getHours();
   const minutes = String(date.getMinutes()).padStart(2, "0");
@@ -5158,9 +5540,8 @@ function formatNotificationTime(createdAt: string) {
   const hour12 = hours % 12 === 0 ? 12 : hours % 12;
   const time = `${period} ${hour12}:${minutes}`;
 
-  if (date >= startToday) return `오늘 ${time}`;
-  if (date >= startYesterday) return `어제 ${time}`;
-  return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+  if (date >= startToday) return time;
+  return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
 }
 
 function isSameDay(a: Date, b: Date) {
@@ -5171,11 +5552,13 @@ function isSameDay(a: Date, b: Date) {
 
 function NotificationsScreen({
   notifications,
+  partnerProfile,
   onBack,
   onMarkAll,
   onOpen,
 }: {
   notifications: AppNotification[];
+  partnerProfile: AppPartnerProfile | null;
   onBack: () => void;
   onMarkAll: () => void;
   onOpen: (item: AppNotification) => void;
@@ -5185,12 +5568,19 @@ function NotificationsScreen({
   const todayItems = notifications.filter((item) => isSameDay(new Date(item.createdAt), today));
   const previousItems = notifications.filter((item) => !isSameDay(new Date(item.createdAt), today));
 
-  const iconFor = (kind: AppNotification["kind"]) => {
-    if (kind === "reminder") return { src: commonAlarm, tone: "purple" as const };
-    if (kind === "chore_done") return { src: commonCheckboxFilled, tone: "green" as const };
-    if (kind === "letter") return { src: reactionLetter, tone: "orange" as const };
-    if (kind === "reaction") return { src: reactionHeartPink, tone: "pink" as const };
-    return { src: commonNotification, tone: "purple" as const };
+  const iconFor = (item: AppNotification) => {
+    if (item.kind === "reminder") return { kind: "asset" as const, src: commonAlarm, tone: "purple" as const };
+    if (item.kind === "chore_done") return { kind: "asset" as const, src: commonCheckboxFilled, tone: "purple" as const };
+    if (item.kind === "letter") return { kind: "asset" as const, src: reactionLetter, tone: "orange" as const };
+    if (item.kind === "reaction") {
+      const emoji = parseReactionEmojiFromTitle(item.title);
+      const src = reactionOptions.find((option) => option.value === emoji)?.src ?? reactionLike;
+      return { kind: "asset" as const, src, tone: "pink" as const };
+    }
+    if (item.kind === "partner_connect") {
+      return { kind: "avatar" as const, tone: "purple" as const };
+    }
+    return { kind: "asset" as const, src: commonNotification, tone: "purple" as const };
   };
 
   const renderGroup = (label: string, items: AppNotification[]) => {
@@ -5200,7 +5590,7 @@ function NotificationsScreen({
         <h3>{label}</h3>
         <ul>
           {items.map((item) => {
-            const icon = iconFor(item.kind);
+            const icon = iconFor(item);
             return (
               <li key={item.id}>
                 <button
@@ -5210,7 +5600,11 @@ function NotificationsScreen({
                 >
                   {!item.read && <i className="notif-dot" aria-hidden />}
                   <span className={`notif-icon ${icon.tone}`}>
-                    <AssetImage src={icon.src} alt="" />
+                    {icon.kind === "avatar" ? (
+                      <AvatarMark value={resolveAvatarId(partnerProfile?.avatarEmoji)} />
+                    ) : (
+                      <AssetImage src={icon.src} alt="" />
+                    )}
                   </span>
                   <div>
                     <strong>{item.body || item.title}</strong>
