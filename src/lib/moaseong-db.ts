@@ -532,11 +532,12 @@ export async function createNotification({
   title: string;
   body: string;
 }) {
-  const { error } = await supabase.from("notifications").insert({
-    user_id: userId,
-    chore_id: choreId ?? null,
-    title,
-    body,
+  // Partner inbox inserts must use RPC — RLS blocks direct insert for other users.
+  const { error } = await supabase.rpc("notify_user", {
+    p_user_id: userId,
+    p_title: title,
+    p_body: body,
+    p_chore_id: choreId ?? null,
   });
 
   if (error) throw error;

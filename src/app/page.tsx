@@ -577,31 +577,42 @@ export default function Home() {
     if (pollInFlightRef.current) return;
     if (localMutationRef.current > 0) return;
     if (typeof document !== "undefined" && document.hidden) return;
-    if (!currentUserId || !currentCycleId) return;
+    if (!currentUserId) return;
 
     pollInFlightRef.current = true;
     try {
+      const choresPromise = currentCycleId
+        ? loadWeeklyChores(currentCycleId, currentUserId, partnerId)
+        : Promise.resolve(null);
+      const letterPromise = currentCycleId
+        ? getWeeklyLetterStatus(currentCycleId, currentUserId, partnerId)
+        : Promise.resolve(null);
+
       const [savedTasks, notifs, letterStatus] = await Promise.all([
-        loadWeeklyChores(currentCycleId, currentUserId, partnerId),
+        choresPromise,
         loadNotifications(currentUserId),
-        getWeeklyLetterStatus(currentCycleId, currentUserId, partnerId),
+        letterPromise,
       ]);
 
       // 요청 중에 로컬 변경이 있으면 덮어쓰지 않음
       if (localMutationRef.current > 0) return;
 
-      const nextTasksKey = tasksFingerprint(savedTasks);
-      if (nextTasksKey !== tasksFingerprintRef.current) {
-        tasksFingerprintRef.current = nextTasksKey;
-        setTasks(savedTasks);
+      if (savedTasks) {
+        const nextTasksKey = tasksFingerprint(savedTasks);
+        if (nextTasksKey !== tasksFingerprintRef.current) {
+          tasksFingerprintRef.current = nextTasksKey;
+          setTasks(savedTasks);
+        }
       }
 
       ingestPolledNotifications(notifs);
 
-      const nextLetterKey = letterStatusFingerprint(letterStatus);
-      if (nextLetterKey !== letterStatusFingerprintRef.current) {
-        letterStatusFingerprintRef.current = nextLetterKey;
-        setWeeklyLetterStatus(letterStatus);
+      if (letterStatus) {
+        const nextLetterKey = letterStatusFingerprint(letterStatus);
+        if (nextLetterKey !== letterStatusFingerprintRef.current) {
+          letterStatusFingerprintRef.current = nextLetterKey;
+          setWeeklyLetterStatus(letterStatus);
+        }
       }
     } catch {
       // 폴링 실패는 UI/로딩에 영향 주지 않음
@@ -613,7 +624,6 @@ export default function Home() {
   useEffect(() => {
     const shouldPoll = Boolean(
       currentUserId
-      && currentCycleId
       && !isAuthResolving
       && !ONBOARDING_SCREENS.has(screen),
     );
@@ -640,7 +650,7 @@ export default function Home() {
       window.clearInterval(timerId);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [screen, currentUserId, currentCycleId, isAuthResolving, quietSyncPartnerVisibleData]);
+  }, [screen, currentUserId, isAuthResolving, quietSyncPartnerVisibleData]);
 
   const prepareChoreSelection = async (coupleId: string, userId: string) => {
     const seeded = await seedDefaultTemplates(userId);
