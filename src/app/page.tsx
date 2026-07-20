@@ -465,8 +465,8 @@ export default function Home() {
       categoryScreenTrackedRef.current = true;
       trackEvent("category_screen_viewed");
     }
-    if (screen === "letters") trackEvent("calendar_viewed", { user_id: currentUserId });
-    if (screen === "castle") trackEvent("castle_history_viewed", { user_id: currentUserId });
+    if (screen === "letters") trackEvent("calendar_viewed", { app_user_id: currentUserId });
+    if (screen === "castle") trackEvent("castle_history_viewed", { app_user_id: currentUserId });
     if (screen === "stats") trackEvent("weekly_report_viewed");
     if (screen === "weeklyLetter") trackEvent("weekly_praise_prompt_shown");
   }, [screen, isAuthResolving, choreMode, currentUserId]);
@@ -1106,7 +1106,7 @@ export default function Home() {
   };
 
   const completeHomeTask = (id: string) => {
-    trackEvent("todo_completed", { user_id: currentUserId });
+    trackEvent("todo_completed", { app_user_id: currentUserId });
     void updateTask(id, { done: true });
   };
 
@@ -1225,7 +1225,7 @@ export default function Home() {
       setHomeAdding(false);
       setNewTask("");
       trackEvent("todo_created", {
-        user_id: userId,
+        app_user_id: userId,
         todo_count: 1,
         template_count: 0,
         manual_count: 1,
@@ -1668,7 +1668,7 @@ export default function Home() {
       setTasks(savedTasks);
       const inputCounts = countTodoInputTypes(choreSelectionTasks.filter((task) => task.selected));
       trackEvent("todo_created", {
-        user_id: context.userId,
+        app_user_id: context.userId,
         todo_count: inputCounts.todo_count,
         template_count: inputCounts.template_count,
         manual_count: inputCounts.manual_count,
@@ -1838,7 +1838,7 @@ export default function Home() {
       const usedAi = usedAiSuggestionRef.current;
       usedAiSuggestionRef.current = false;
       trackEvent("letter_sent", {
-        user_id: userId,
+        app_user_id: userId,
         letter_type: weekly ? "forced" : "voluntary",
         used_ai_suggestion: usedAi,
       });
@@ -1968,7 +1968,7 @@ export default function Home() {
 
     try {
       await addChoreReaction(id, userId, reactionValue);
-      trackEvent("reaction_sent", { user_id: userId, reaction: reactionValue });
+      trackEvent("reaction_sent", { app_user_id: userId, reaction: reactionValue });
       setReactions((current) => [
         {
           id: `local-${Date.now()}`,
@@ -2104,7 +2104,7 @@ export default function Home() {
     void (async () => {
       if (!currentCoupleId || !currentUserId) return;
       trackEvent("castle_history_card_clicked", {
-        user_id: currentUserId,
+        app_user_id: currentUserId,
         week_start: stat.weekStart,
         completion_rate: stat.completionRate,
       });
@@ -2377,7 +2377,7 @@ export default function Home() {
             onSelectDate={(year, month, day) => {
               setLettersFocusAt(null);
               trackEvent("calendar_date_selected", {
-                user_id: currentUserId,
+                app_user_id: currentUserId,
                 date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
               });
             }}
@@ -2697,7 +2697,7 @@ export default function Home() {
           onClose={() => setShowIcebreakerAi(false)}
           onApply={(phrase) => {
             usedAiSuggestionRef.current = true;
-            trackEvent("ai_suggestion_applied", { user_id: currentUserId });
+            trackEvent("ai_suggestion_applied", { app_user_id: currentUserId });
             setLetterBody((current) => appendIcebreakerPhrase(current, phrase));
             setShowIcebreakerAi(false);
           }}
