@@ -7,7 +7,6 @@ import { AI_PERSPECTIVE_TYPE, countTodoInputTypes, trackEvent } from "@/lib/anal
 import {
   castleLevel1,
   castleLevel10,
-  castleLevelsForWeek,
   castleSrcForWeek,
   castleStageFromRate,
 } from "@/lib/castle-assets";
@@ -43,6 +42,7 @@ import avatarQueen from "../../icons/avatar-queen.svg";
 import avatarRainbow from "../../icons/avatar-rainbow.svg";
 import avatarSky from "../../icons/avatar-sky.svg";
 import avatarYellow from "../../icons/avatar-yellow.svg";
+import castleUpgradeGuide from "../../castle_image/성 업그레이드 설명서.svg";
 import bottomNavCalander from "../../icons/bottomNav-calander.svg";
 import bottomNavCastle from "../../icons/bottomNav-castle.svg";
 import bottomNavHome from "../../icons/bottomNav-home.svg";
@@ -67,7 +67,6 @@ import commonStatistics from "../../icons/common-statistics.svg";
 import commonTrophy from "../../icons/common-trophy.svg";
 import commonWarning from "../../icons/common-warning.svg";
 import mainLogo from "../../icons/main-logo.svg";
-import taskCooking from "../../icons/task-cooking.svg";
 import taskPlant from "../../icons/task-plant.svg";
 import reactionClap from "../../icons/reaction-clap.svg";
 import reactionClover from "../../icons/reaction-clover.svg";
@@ -141,6 +140,7 @@ import {
   previewInviteConnect,
   redeemInviteCode,
   replaceWeeklyChores,
+  appendWeeklyChores,
   seedDefaultTemplates,
   updateChoreTemplate,
   updateWeeklyChore,
@@ -154,6 +154,8 @@ type Screen =
   | "social"
   | "login"
   | "invite"
+  | "inviteCreate"
+  | "inviteEnter"
   | "chores"
   | "home"
   | "letter"
@@ -217,6 +219,14 @@ function calcWeekProgress(
 function resolveAvatarId(value?: string | null) {
   if (value && avatarOptions.some((item) => item.id === value)) return value;
   return "avatar-mint";
+}
+
+function partnerDisplayName(profile?: AppPartnerProfile | null) {
+  return profile?.nickname?.trim() || "파트너";
+}
+
+function partnerAvatarId(profile?: AppPartnerProfile | null) {
+  return resolveAvatarId(profile?.avatarEmoji);
 }
 
 const reactionOptions = [
@@ -292,12 +302,16 @@ export default function Home() {
     message: string;
     kind: AppNotification["kind"];
     reactionEmoji?: string | null;
+    local?: boolean;
   } | null>(null);
   const knownNotifIdsRef = useRef<Set<string> | null>(null);
   const alertToastTimerRef = useRef<number | null>(null);
+  const castleStageRef = useRef(1);
+  const weeklyLetterStatusRef = useRef({ meSent: false, partnerSent: false, bothSent: false });
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [inviteEntry, setInviteEntry] = useState<"onboarding" | "settings">("onboarding");
   const [choreMode, setChoreMode] = useState<"first" | "repeat">("first");
+  const [choreSaveMode, setChoreSaveMode] = useState<"replace" | "merge">("replace");
   const [statsComplete, setStatsComplete] = useState(false);
   const [weekStreak, setWeekStreak] = useState(0);
   const [weeklyLetterStatus, setWeeklyLetterStatus] = useState({ meSent: false, partnerSent: false, bothSent: false });
@@ -338,7 +352,7 @@ export default function Home() {
 
   const completeCount = tasks.filter((task) => task.done).length;
   const progress = calcWeekProgress(completeCount, tasks.length, weeklyLetterStatus);
-  const castleLevel = Math.min(10, Math.max(1, Math.floor(progress / 10)));
+  const castleLevel = castleStageFromRate(progress);
   const meDone = tasks.filter((task) => task.done && task.assignee === "me").length;
   const partnerDone = tasks.filter((task) => task.done && task.assignee === "partner").length;
 
@@ -527,6 +541,23 @@ export default function Home() {
     setAlertToast(null);
   }, []);
 
+  const showHomeAlertBanner = useCallback((message: string, kind: AppNotification["kind"] = "other") => {
+    if (ONBOARDING_SCREENS.has(screen)) return;
+    if (screen === "notifications") return;
+
+    dismissAlertToast();
+    setAlertToast({
+      id: `local-${Date.now()}`,
+      message,
+      kind,
+      local: true,
+    });
+    alertToastTimerRef.current = window.setTimeout(() => {
+      setAlertToast(null);
+      alertToastTimerRef.current = null;
+    }, 3800);
+  }, [dismissAlertToast, screen]);
+
   const showPartnerAlertToast = useCallback((item: AppNotification) => {
     if (ONBOARDING_SCREENS.has(screen)) return;
     if (screen === "notifications") return;
@@ -543,6 +574,14 @@ export default function Home() {
       alertToastTimerRef.current = null;
     }, 3800);
   }, [dismissAlertToast, screen]);
+
+  useEffect(() => {
+    castleStageRef.current = castleLevel;
+  }, [castleLevel]);
+
+  useEffect(() => {
+    weeklyLetterStatusRef.current = weeklyLetterStatus;
+  }, [weeklyLetterStatus]);
 
   const ingestPolledNotifications = useCallback((notifs: AppNotification[]) => {
     const nextNotifsKey = notificationsFingerprint(notifs);
@@ -600,8 +639,20 @@ export default function Home() {
       if (savedTasks) {
         const nextTasksKey = tasksFingerprint(savedTasks);
         if (nextTasksKey !== tasksFingerprintRef.current) {
+          const resolvedLetter = letterStatus ?? weeklyLetterStatusRef.current;
+          const prevStage = castleStageRef.current;
+          const nextDone = savedTasks.filter((task) => task.done).length;
+          const nextStage = castleStageFromRate(
+            calcWeekProgress(nextDone, savedTasks.length, resolvedLetter),
+          );
+
           tasksFingerprintRef.current = nextTasksKey;
           setTasks(savedTasks);
+
+          if (nextStage > prevStage) {
+            showHomeAlertBanner("성이 업그레이드 되었습니다", "other");
+            castleStageRef.current = nextStage;
+          }
         }
       }
 
@@ -619,7 +670,7 @@ export default function Home() {
     } finally {
       pollInFlightRef.current = false;
     }
-  }, [currentCycleId, currentUserId, ingestPolledNotifications, partnerId]);
+  }, [currentCycleId, currentUserId, ingestPolledNotifications, partnerId, showHomeAlertBanner]);
 
   useEffect(() => {
     const shouldPoll = Boolean(
@@ -1018,9 +1069,11 @@ export default function Home() {
     window.setTimeout(() => setToastMessage((current) => (current === message ? null : current)), 1800);
   };
 
-  const createInviteCodeForUser = async () => {
+  const createInviteCodeForUser = async (options?: { showModal?: boolean }) => {
+    const showModal = options?.showModal ?? true;
+
     if (myCode) {
-      setShowInviteCodeModal(true);
+      if (showModal) setShowInviteCodeModal(true);
       return;
     }
 
@@ -1033,7 +1086,7 @@ export default function Home() {
       const { code, couple } = await createInviteCode(userId);
       setMyCode(code);
       syncCoupleState(userId, couple);
-      setShowInviteCodeModal(true);
+      if (showModal) setShowInviteCodeModal(true);
       trackEvent("invite_code_created");
     } catch (error) {
       const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
@@ -1057,8 +1110,10 @@ export default function Home() {
     const previous = tasks.find((task) => task.id === id);
     const localPatch: Partial<AppTask> = {
       ...patch,
-      ...(patch.done === true ? { assignee: "me" as const } : {}),
-      ...(patch.done === false ? { assignee: "none" as const } : {}),
+      ...(patch.done === true
+        ? { assignee: "me" as const, completedAt: new Date().toISOString() }
+        : {}),
+      ...(patch.done === false ? { assignee: "none" as const, completedAt: null } : {}),
     };
     beginLocalMutation();
     setTasks((current) => {
@@ -1106,8 +1161,21 @@ export default function Home() {
   };
 
   const completeHomeTask = (id: string) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || task.done) return;
+
+    const prevStage = castleLevel;
+    const nextProgress = calcWeekProgress(completeCount + 1, tasks.length, weeklyLetterStatus);
+    const nextStage = castleStageFromRate(nextProgress);
+
     trackEvent("todo_completed", { app_user_id: currentUserId });
     void updateTask(id, { done: true });
+    showToast("내가 한 일에 추가되었습니다");
+
+    if (nextStage > prevStage) {
+      showHomeAlertBanner("성이 업그레이드 되었습니다", "other");
+      castleStageRef.current = nextStage;
+    }
   };
 
   const uncompleteHomeTask = (id: string) => {
@@ -1285,14 +1353,6 @@ export default function Home() {
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const openTemplateManage = async () => {
-    const userId = await ensureSignedInUser();
-    if (!userId) return;
-    const seeded = await seedDefaultTemplates(userId);
-    setTemplates(seeded);
-    setScreen("templateManage");
   };
 
   const handleSaveProfile = async (nextNickname: string, nextEmoji: string) => {
@@ -1496,7 +1556,9 @@ export default function Home() {
           assignee: existing?.assignee ?? "none",
           selected: true,
           done: existing?.done ?? false,
+          completedAt: existing?.completedAt ?? null,
           reacted: existing?.reacted ?? false,
+          myReaction: existing?.myReaction ?? null,
         };
       });
       const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, nextTasks);
@@ -1536,7 +1598,6 @@ export default function Home() {
         const couple = await getCurrentCouple();
         syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
         setInviteCode("");
-        await loadCycleData(coupleId, userId);
         trackEvent("partner_connected");
 
         // 코드 생성자(상대)에게 파트너 연결 알림
@@ -1556,11 +1617,13 @@ export default function Home() {
         }
 
         if (options.fromSettings) {
-          showAlert("연결 완료", "파트너와 연결됐어요.");
-          setScreen("mypage");
+          showAlert("연결 완료", "파트너와 연결됐어요.", () => {
+            void continueAfterPartnerCheck(coupleId, userId);
+          });
           return;
         }
 
+        // 합산 할 일 있음 → C-01 / 없음 → A-06 (알럿·컨펌 없이)
         await continueAfterPartnerCheck(coupleId, userId);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1664,8 +1727,12 @@ export default function Home() {
 
     setIsSaving(true);
     try {
-      const savedTasks = await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
+      // 파트너 연결 시 기존 할 일과 합산(중복 가능). 미연결은 교체 저장.
+      const savedTasks = (choreSaveMode === "merge" || Boolean(partnerId))
+        ? await appendWeeklyChores(context.cycleId, context.userId, choreSelectionTasks, context.userId, partnerId)
+        : await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
       setTasks(savedTasks);
+      setChoreSaveMode("replace");
       const inputCounts = countTodoInputTypes(choreSelectionTasks.filter((task) => task.selected));
       trackEvent("todo_created", {
         app_user_id: context.userId,
@@ -1689,17 +1756,19 @@ export default function Home() {
       ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
       : await ensureCouple(userId);
     syncCoupleState(userId, couple);
+    setChoreSaveMode("replace");
     await prepareChoreSelection(couple.id, userId);
     setScreen("chores");
   };
 
-  /** 온보딩 A-04: 연결 완료 후 할 일 유무에 따라 C-01 / A-06 */
+  /** 파트너 연결 후: 합산 할 일 있음 → C-01 / 없음 → A-06 */
   const continueAfterPartnerCheck = async (coupleId: string, userId: string) => {
     const taskCount = await loadCycleData(coupleId, userId);
     if (taskCount > 0) {
       setScreen("home");
       return;
     }
+    setChoreSaveMode("replace");
     await prepareChoreSelection(coupleId, userId);
     setScreen("chores");
   };
@@ -1788,6 +1857,53 @@ export default function Home() {
     );
   };
 
+  const openWeeklyStatsReport = async (targetCycleId: string, coupleId: string, userId: string) => {
+    if (closingWeekRange) {
+      window.localStorage.removeItem(weekCloseStorageKey(userId, closingWeekRange.weekStart));
+    }
+    setShowWeekClosePopup(false);
+
+    const letterStatus = await getWeeklyLetterStatus(targetCycleId, userId, partnerId);
+    setWeeklyLetterStatus(letterStatus);
+    const weekChores = await loadWeeklyChores(targetCycleId, userId, partnerId);
+    const weekDone = weekChores.filter((task) => task.done).length;
+    const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
+    const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
+    const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
+    const complete = letterStatus.bothSent && weekProgress >= 100;
+    trackEvent("castle_stage_finalized", {
+      completion_rate: weekProgress,
+      castle_stage: castleStageFromRate(weekProgress),
+      both_letters_sent: letterStatus.bothSent,
+    });
+    setStatsComplete(complete);
+    setWeekStreak(await countCompletedWeekStreak(coupleId));
+    setClosingWeekProgress(weekProgress);
+    setClosingWeekTasks(weekChores);
+    setReportTasks(weekChores);
+    setReportMeta({
+      progress: weekProgress,
+      completeCount: weekDone,
+      totalCount: weekChores.length,
+      meDone: weekMeDone,
+      partnerDone: weekPartnerDone,
+    });
+    try {
+      await upsertWeeklyStats({
+        cycleId: targetCycleId,
+        completionRate: weekProgress,
+        meCompletedCount: weekMeDone,
+        partnerCompletedCount: weekPartnerDone,
+        sentLetterCount: (letterStatus.meSent ? 1 : 0) + (letterStatus.partnerSent ? 1 : 0),
+      });
+      setWeeklyStats(await loadWeeklyStats(coupleId, partnerId));
+    } catch {
+      // 통계 저장 실패가 결과 화면 진입을 막지 않게 둡니다.
+    }
+    setStatsEntry("letter");
+    setScreen("stats");
+  };
+
   const sendLetter = async (weekly = false) => {
     const meaningfulLength = letterBody.replace(/\s/g, "").length;
     if (meaningfulLength < 1) {
@@ -1850,50 +1966,7 @@ export default function Home() {
       }
 
       if (weekly && targetCycleId && currentCoupleId) {
-        if (closingWeekRange) {
-          window.localStorage.removeItem(weekCloseStorageKey(userId, closingWeekRange.weekStart));
-        }
-        setShowWeekClosePopup(false);
-
-        const letterStatus = await getWeeklyLetterStatus(targetCycleId, userId, partnerId);
-        setWeeklyLetterStatus(letterStatus);
-        const weekChores = await loadWeeklyChores(targetCycleId, userId, partnerId);
-        const weekDone = weekChores.filter((task) => task.done).length;
-        const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
-        const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
-        const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
-        const complete = letterStatus.bothSent && weekProgress >= 100;
-        trackEvent("castle_stage_finalized", {
-          completion_rate: weekProgress,
-          castle_stage: castleStageFromRate(weekProgress),
-          both_letters_sent: letterStatus.bothSent,
-        });
-        setStatsComplete(complete);
-        setWeekStreak(await countCompletedWeekStreak(currentCoupleId));
-        setClosingWeekProgress(weekProgress);
-        setClosingWeekTasks(weekChores);
-        setReportTasks(weekChores);
-        setReportMeta({
-          progress: weekProgress,
-          completeCount: weekDone,
-          totalCount: weekChores.length,
-          meDone: weekMeDone,
-          partnerDone: weekPartnerDone,
-        });
-        try {
-          await upsertWeeklyStats({
-            cycleId: targetCycleId,
-            completionRate: weekProgress,
-            meCompletedCount: weekMeDone,
-            partnerCompletedCount: weekPartnerDone,
-            sentLetterCount: (letterStatus.meSent ? 1 : 0) + (letterStatus.partnerSent ? 1 : 0),
-          });
-          setWeeklyStats(await loadWeeklyStats(currentCoupleId, partnerId));
-        } catch {
-          // 통계 저장 실패가 결과 화면 진입을 막지 않게 둡니다.
-        }
-        setStatsEntry("letter");
-        setScreen("stats");
+        await openWeeklyStatsReport(targetCycleId, currentCoupleId, userId);
         return;
       }
 
@@ -1906,6 +1979,48 @@ export default function Home() {
       }
       showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : "편지 전송에 실패했어요. 다시 시도해 주세요.");
     }
+  };
+
+  const skipWeeklyLetterLater = async () => {
+    const userId = await ensureSignedInUser();
+    if (!userId || !currentCoupleId) {
+      setScreen("home");
+      return;
+    }
+
+    try {
+      let targetCycleId = currentCycleId;
+      if (closingWeekRange) {
+        targetCycleId = await ensureCurrentCycleForWeek(
+          currentCoupleId,
+          closingWeekRange.weekStart,
+          closingWeekRange.weekEnd,
+        );
+      }
+      if (!targetCycleId) {
+        setScreen("home");
+        return;
+      }
+      await openWeeklyStatsReport(targetCycleId, currentCoupleId, userId);
+    } catch {
+      showAlert("알림", "화면 이동에 실패했어요. 다시 시도해 주세요.");
+    }
+  };
+
+  const handleWeeklyLetterLater = () => {
+    const meaningfulLength = letterBody.replace(/\s/g, "").length;
+    if (meaningfulLength >= 1) {
+      void sendLetter(true);
+      return;
+    }
+
+    showConfirm(
+      "",
+      "편지를 작성하지 않으시면 성을 완성하지 못하게 됩니다. 그래도 넘어가시겠습니까?",
+      () => void skipWeeklyLetterLater(),
+      "확인",
+      "취소",
+    );
   };
 
   const requestSendInstantLetter = () => {
@@ -1955,7 +2070,7 @@ export default function Home() {
 
     beginLocalMutation();
     setTasks((current) => {
-      const next = current.map((item) => (item.id === id ? { ...item, reacted: true } : item));
+      const next = current.map((item) => (item.id === id ? { ...item, reacted: true, myReaction: reactionValue } : item));
       tasksFingerprintRef.current = tasksFingerprint(next);
       return next;
     });
@@ -1994,7 +2109,7 @@ export default function Home() {
       }
     } catch {
       setTasks((current) => {
-        const next = current.map((item) => (item.id === id ? { ...item, reacted: false } : item));
+        const next = current.map((item) => (item.id === id ? { ...item, reacted: false, myReaction: null } : item));
         tasksFingerprintRef.current = tasksFingerprint(next);
         return next;
       });
@@ -2221,15 +2336,47 @@ export default function Home() {
         return (
           <InviteScreen
             selectedEmoji={selectedEmoji}
-            inviteCode={inviteCode}
-            myCode={myCode}
             entry={inviteEntry}
-            onInviteCodeChange={setInviteCode}
-            onCreateCode={() => void createInviteCodeForUser()}
-            onCopyCode={() => void copyInviteCode()}
-            onNext={() => void handleInviteNext()}
+            onSelectCreate={() => {
+              setInviteCode("");
+              setScreen("inviteCreate");
+              void createInviteCodeForUser({ showModal: false });
+            }}
+            onSelectEnter={() => setScreen("inviteEnter")}
             onSkip={handleSkipInvite}
             onBack={inviteEntry === "settings" ? () => setScreen("mypage") : undefined}
+            isSaving={isSaving}
+          />
+        );
+      case "inviteCreate":
+        return (
+          <InviteCreateScreen
+            selectedEmoji={selectedEmoji}
+            myCode={myCode}
+            entry={inviteEntry}
+            onCopyCode={() => void copyInviteCode()}
+            onGoChores={() => void proceedInviteToChores()}
+            onDone={() => setScreen("mypage")}
+            onBack={() => setScreen("invite")}
+            isSaving={isSaving}
+          />
+        );
+      case "inviteEnter":
+        return (
+          <InviteEnterScreen
+            selectedEmoji={selectedEmoji}
+            inviteCode={inviteCode}
+            onInviteCodeChange={setInviteCode}
+            onConnect={() => {
+              if (!inviteCode.trim()) {
+                showAlert("코드 입력", "파트너 초대 코드를 입력해 주세요.");
+                return;
+              }
+              void connectWithInviteCode(inviteCode.trim(), {
+                fromSettings: inviteEntry === "settings",
+              });
+            }}
+            onBack={() => setScreen("invite")}
             isSaving={isSaving}
           />
         );
@@ -2289,6 +2436,7 @@ export default function Home() {
             onOpenAi={() => setShowIcebreakerAi(true)}
             onEmpty={() => showAlert("알림", "편지를 입력해 주세요.")}
             onSend={requestSendWeeklyLetter}
+            onLater={handleWeeklyLetterLater}
           />
         );
       case "sent":
@@ -2325,6 +2473,12 @@ export default function Home() {
           letter.kind === "weekly"
           || letter.title.includes("주간")
         ));
+        const inReportWeek = (iso: string) => {
+          const day = iso.slice(0, 10);
+          return day >= reportWeek.weekStart && day <= reportWeek.weekEnd;
+        };
+        const reportLetterCount = letters.filter((letter) => inReportWeek(letter.createdAt)).length;
+        const reportReactionCount = reactions.filter((item) => inReportWeek(item.createdAt)).length;
         return (
           <StatsScreen
             progress={reportProgress}
@@ -2337,6 +2491,8 @@ export default function Home() {
             weekEnd={reportWeek.weekEnd}
             complete={statsComplete || reportProgress >= 100}
             weekStreak={weekStreak}
+            letterCount={reportLetterCount}
+            reactionCount={reportReactionCount}
             myLetter={weeklyLetters.find((letter) => letter.from === "me") ?? null}
             partnerLetter={weeklyLetters.find((letter) => letter.from === "partner") ?? null}
             selectedEmoji={selectedEmoji}
@@ -2365,6 +2521,7 @@ export default function Home() {
             reactions={reactions}
             partnerProfile={partnerProfile}
             nickname={nickname}
+            selectedEmoji={selectedEmoji}
             focusAt={lettersFocusAt}
             onSelectLetter={(letter) => {
               setSelectedLetter(letter);
@@ -2401,7 +2558,6 @@ export default function Home() {
             partnerConnected={Boolean(partnerId)}
             notificationEnabled={notificationEnabled}
             onEdit={() => setShowProfileEdit(true)}
-            onManageTasks={() => void openTemplateManage()}
             onConnectPartner={() => {
               setInviteEntry("settings");
               setScreen("invite");
@@ -2505,13 +2661,19 @@ export default function Home() {
     }
   };
 
-  const showNav = ["home", "letters", "castle", "mypage", "notifications"].includes(screen)
+  const showNav = ["home", "letters", "castle", "mypage"].includes(screen)
     || (screen === "stats" && statsEntry === "castle");
 
   return (
     <main className="app-shell">
       <section className="app-frame">
-        <div className={showNav ? "screen with-nav" : "screen"}>
+        <div
+          className={[
+            "screen",
+            showNav ? "with-nav" : "",
+            !isAuthResolving && !authError && screen === "home" ? "is-home" : "",
+          ].filter(Boolean).join(" ")}
+        >
           {isAuthResolving ? <AuthLoadingScreen /> : authError ? <AuthErrorScreen message={authError} onRetry={() => {
             setAuthError(null);
             setScreen("login");
@@ -2522,9 +2684,7 @@ export default function Home() {
             current={
               screen === "stats" && statsEntry === "castle"
                 ? "castle"
-                : screen === "notifications"
-                  ? "home"
-                  : screen
+                : screen
             }
             onChange={(next) => {
               if (next === "letters") setLettersFocusAt(null);
@@ -2532,39 +2692,41 @@ export default function Home() {
             }}
           />
         )}
-
-        {alertToast && !ONBOARDING_SCREENS.has(screen) && (
-          <button
-            className="alert-toast-banner"
-            type="button"
-            onClick={() => {
-              dismissAlertToast();
-              setScreen("notifications");
-            }}
-          >
-            <span className={`alert-toast-icon ${alertToast.kind}`}>
-              {alertToast.kind === "partner_connect" ? (
-                <AvatarMark value={resolveAvatarId(partnerProfile?.avatarEmoji)} />
-              ) : alertToast.kind === "reaction" ? (
-                <AssetImage
-                  src={
-                    reactionOptions.find((item) => item.value === alertToast.reactionEmoji)?.src
-                    ?? reactionLike
-                  }
-                  alt=""
-                />
-              ) : alertToast.kind === "letter" ? (
-                <AssetImage src={reactionLetter} alt="" />
-              ) : alertToast.kind === "chore_done" ? (
-                <AssetImage src={commonCheckboxFilled} alt="" />
-              ) : (
-                <AssetImage src={commonNotification} alt="" />
-              )}
-            </span>
-            <strong>{alertToast.message}</strong>
-          </button>
-        )}
       </section>
+
+      {alertToast && !ONBOARDING_SCREENS.has(screen) && (
+        <button
+          className="alert-toast-banner"
+          type="button"
+          onClick={() => {
+            dismissAlertToast();
+            if (!alertToast.local) setScreen("notifications");
+          }}
+        >
+          <span className={`alert-toast-icon ${alertToast.kind}`}>
+            {alertToast.local && alertToast.message.includes("업그레이드") ? (
+              <AssetImage src={commonTrophy} alt="" />
+            ) : alertToast.kind === "partner_connect" ? (
+              <AvatarMark value={partnerAvatarId(partnerProfile)} />
+            ) : alertToast.kind === "reaction" ? (
+              <AssetImage
+                src={
+                  reactionOptions.find((item) => item.value === alertToast.reactionEmoji)?.src
+                  ?? reactionLike
+                }
+                alt=""
+              />
+            ) : alertToast.kind === "letter" ? (
+              <AssetImage src={reactionLetter} alt="" />
+            ) : alertToast.kind === "chore_done" ? (
+              <AssetImage src={commonCheckboxFilled} alt="" />
+            ) : (
+              <AssetImage src={commonNotification} alt="" />
+            )}
+          </span>
+          <strong>{alertToast.message}</strong>
+        </button>
+      )}
 
       {dialog?.kind === "alert" && (
         <AlertDialog
@@ -2686,7 +2848,7 @@ export default function Home() {
       {showIcebreakerAi && (
         <IcebreakerAiModal
           userId={currentUserId}
-          partnerNickname={partnerProfile?.nickname?.trim() || "파트너"}
+          partnerNickname={partnerDisplayName(partnerProfile)}
           tasks={
             screen === "weeklyLetter" && closingWeekTasks.length > 0
               ? closingWeekTasks
@@ -2712,10 +2874,7 @@ export default function Home() {
       )}
 
       {showCastleUpgrade && (
-        <CastleUpgradeModal
-          weekStart={currentWeekRange().weekStart}
-          onClose={() => setShowCastleUpgrade(false)}
-        />
+        <CastleUpgradeModal onClose={() => setShowCastleUpgrade(false)} />
       )}
 
       {selectedLetter && (
@@ -2724,12 +2883,12 @@ export default function Home() {
           senderEmoji={
             selectedLetter.from === "me"
               ? resolveAvatarId(selectedEmoji)
-              : resolveAvatarId(partnerProfile?.avatarEmoji)
+              : partnerAvatarId(partnerProfile)
           }
           senderName={
             selectedLetter.from === "me"
               ? (nickname.trim() || "나")
-              : (partnerProfile?.nickname?.trim() || "파트너")
+              : partnerDisplayName(partnerProfile)
           }
           onClose={() => setSelectedLetter(null)}
         />
@@ -2741,12 +2900,12 @@ export default function Home() {
           senderEmoji={
             selectedReaction.from === "me"
               ? resolveAvatarId(selectedEmoji)
-              : resolveAvatarId(partnerProfile?.avatarEmoji)
+              : partnerAvatarId(partnerProfile)
           }
           senderName={
             selectedReaction.from === "me"
               ? (nickname.trim() || "나")
-              : (partnerProfile?.nickname?.trim() || "파트너")
+              : partnerDisplayName(partnerProfile)
           }
           onClose={() => setSelectedReaction(null)}
         />
@@ -2968,94 +3127,187 @@ function LoginScreen({
   );
 }
 
+function InviteCoupleHeader({ selectedEmoji }: { selectedEmoji: string }) {
+  return (
+    <div className="invite-couple">
+      <span className="invite-avatar me"><AvatarMark value={selectedEmoji} /></span>
+      <span className="invite-heart-line">
+        <span className="invite-dash" />
+        <AssetImage src={reactionHeartPink} alt="" />
+        <span className="invite-dash" />
+      </span>
+      <span className="invite-avatar partner dotted">
+        <AssetImage src={avatarQueen} alt="" />
+        <span className="invite-partner-heart" aria-hidden>
+          <AssetImage src={reactionHeartPink} alt="" />
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/** A-04 / F-01: 파트너 연결 방법 선택 */
 function InviteScreen({
   selectedEmoji,
-  inviteCode,
-  myCode,
   entry,
-  onInviteCodeChange,
-  onCreateCode,
-  onCopyCode,
-  onNext,
+  onSelectCreate,
+  onSelectEnter,
   onSkip,
   onBack,
   isSaving,
 }: {
   selectedEmoji: string;
-  inviteCode: string;
-  myCode: string;
   entry: "onboarding" | "settings";
-  onInviteCodeChange: (value: string) => void;
-  onCreateCode: () => void;
-  onCopyCode: () => void;
-  onNext: () => void;
+  onSelectCreate: () => void;
+  onSelectEnter: () => void;
   onSkip: () => void;
   onBack?: () => void;
   isSaving: boolean;
 }) {
-  const primaryLabel = entry === "settings" ? "연결하기" : "다음으로 →";
+  const fromSettings = entry === "settings";
+  const createLabel = fromSettings ? "코드 생성" : "내가 먼저 시작할게요";
+  const enterLabel = fromSettings ? "코드 입력" : "파트너가 먼저 시작했어요";
 
   return (
     <div className="invite-screen">
       {onBack && <BackChip onClick={onBack} />}
-      <div className="invite-couple">
-        <span className="invite-avatar me"><AvatarMark value={selectedEmoji} /></span>
-        <span className="invite-heart-line">
-          <span className="invite-dash" />
-          <AssetImage src={reactionHeartPink} alt="" />
-          <span className="invite-dash" />
-        </span>
-        <span className="invite-avatar partner dotted">
-          <AssetImage src={avatarQueen} alt="" />
-        </span>
+      <InviteCoupleHeader selectedEmoji={selectedEmoji} />
+
+      <div className="invite-heading">
+        <h1 className="invite-title">파트너를 연결해요</h1>
+        <p className="invite-subtitle">어떤 방법으로 시작할까요?</p>
       </div>
 
-      <h1 className="invite-title">파트너와 연결해 볼까요?</h1>
+      <div className="invite-choice-list">
+        <button className="invite-choice-card" type="button" disabled={isSaving} onClick={onSelectCreate}>
+          <span className="invite-choice-text">
+            <strong>{createLabel}</strong>
+            <span>초대 코드를 만들어 파트너에게 공유할게요</span>
+          </span>
+          <em className="invite-choice-chevron" aria-hidden>{">"}</em>
+        </button>
+
+        <button className="invite-choice-card" type="button" disabled={isSaving} onClick={onSelectEnter}>
+          <span className="invite-choice-text">
+            <strong>{enterLabel}</strong>
+            <span>파트너에게 받은 초대 코드를 입력해서 연결할게요</span>
+          </span>
+          <em className="invite-choice-chevron" aria-hidden>{">"}</em>
+        </button>
+      </div>
+
+      <div className="invite-footer invite-footer-choice">
+        <button className="invite-later" disabled={isSaving} type="button" onClick={onSkip}>
+          나중에 연결할게요
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A-04.1: 초대 코드 생성 */
+function InviteCreateScreen({
+  selectedEmoji,
+  myCode,
+  entry,
+  onCopyCode,
+  onGoChores,
+  onDone,
+  onBack,
+  isSaving,
+}: {
+  selectedEmoji: string;
+  myCode: string;
+  entry: "onboarding" | "settings";
+  onCopyCode: () => void;
+  onGoChores: () => void;
+  onDone: () => void;
+  onBack: () => void;
+  isSaving: boolean;
+}) {
+  return (
+    <div className="invite-screen">
+      <BackChip onClick={onBack} />
+      <InviteCoupleHeader selectedEmoji={selectedEmoji} />
+
+      <div className="invite-heading">
+        <h1 className="invite-title">초대 코드 생성하기</h1>
+        <p className="invite-subtitle">
+          아래 코드를 복사해 파트너에게 공유해 주세요.
+          <br />
+          공유 후 이번주 할 일을 먼저 생성해보세요.
+        </p>
+      </div>
 
       <section className="invite-section">
-        <div className="invite-section-head">
-          <h2>내가 먼저 시작했어요</h2>
-          <p>초대 코드를 복사해서 파트너에게 공유해요</p>
-        </div>
         <div className="invite-panel">
           <span className="invite-label">나의 초대 코드</span>
-          {myCode ? (
-            <div className="my-code-box">
-              <strong>{myCode}</strong>
-              <button className="copy-icon-button" aria-label="코드 복사" type="button" onClick={onCopyCode}>
-                <AssetImage src={commonCopy} alt="" />
-              </button>
-            </div>
-          ) : (
-            <button className="invite-generate" disabled={isSaving} type="button" onClick={onCreateCode}>
-              {isSaving ? "생성 중..." : "초대 코드 생성하기"}
+          <div className="my-code-box">
+            <strong>{myCode || (isSaving ? "생성 중..." : "—")}</strong>
+            <button
+              className="copy-icon-button"
+              aria-label="코드 복사"
+              type="button"
+              disabled={!myCode || isSaving}
+              onClick={onCopyCode}
+            >
+              <AssetImage src={commonCopy} alt="" />
             </button>
-          )}
-          {myCode ? (
-            <button className="invite-review" disabled={isSaving} type="button" onClick={onCreateCode}>
-              초대 코드 다시 보기
-            </button>
-          ) : null}
+          </div>
         </div>
       </section>
 
-      <div className="invite-or" aria-hidden>
-        <span />
-        <em>또는</em>
-        <span />
+      <div className="invite-footer">
+        <button
+          className="start-primary"
+          disabled={isSaving || !myCode}
+          type="button"
+          onClick={entry === "settings" ? onDone : onGoChores}
+        >
+          {entry === "settings" ? "완료" : "할 일 생성하러 가기"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A-04.2: 파트너 초대 코드 입력 */
+function InviteEnterScreen({
+  selectedEmoji,
+  inviteCode,
+  onInviteCodeChange,
+  onConnect,
+  onBack,
+  isSaving,
+}: {
+  selectedEmoji: string;
+  inviteCode: string;
+  onInviteCodeChange: (value: string) => void;
+  onConnect: () => void;
+  onBack: () => void;
+  isSaving: boolean;
+}) {
+  return (
+    <div className="invite-screen">
+      <BackChip onClick={onBack} />
+      <InviteCoupleHeader selectedEmoji={selectedEmoji} />
+
+      <div className="invite-heading">
+        <h1 className="invite-title">초대 코드 입력하기</h1>
+        <p className="invite-subtitle">
+          파트너에게 전달 받은 초대 코드를 입력하세요.
+          <br />
+          입력 후 이번주 할 일을 생성해보세요.
+        </p>
       </div>
 
       <section className="invite-section">
-        <div className="invite-section-head">
-          <h2>파트너가 먼저 시작했어요</h2>
-          <p>초대 코드를 입력하면 즉시 파트너와 연결돼요</p>
-        </div>
         <div className="invite-panel">
-          <label className="invite-label" htmlFor="partner-invite-code">파트너 초대 코드</label>
+          <label className="invite-label" htmlFor="partner-invite-code">파트너의 초대 코드</label>
           <input
             id="partner-invite-code"
             className="partner-code-input"
-            placeholder="초대 코드를 입력하세요"
+            placeholder="초대 코드를 입력하세요."
             value={inviteCode}
             onChange={(event) => onInviteCodeChange(event.target.value)}
           />
@@ -3063,11 +3315,8 @@ function InviteScreen({
       </section>
 
       <div className="invite-footer">
-        <button className="start-primary" disabled={isSaving} type="button" onClick={onNext}>
-          {isSaving ? "연결 중..." : primaryLabel}
-        </button>
-        <button className="invite-later" disabled={isSaving} type="button" onClick={onSkip}>
-          나중에 연결할게요
+        <button className="start-primary" disabled={isSaving} type="button" onClick={onConnect}>
+          {isSaving ? "연결 중..." : "연결하기"}
         </button>
       </div>
     </div>
@@ -3101,14 +3350,21 @@ function ChoreSelectScreen({
   const allSelected = tasks.length > 0 && tasks.every((task) => task.selected);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const categories = Object.keys(groupedTasks);
+  const categories = [
+    ...categoryMeta.map((item) => item.category).filter((category) => (groupedTasks[category] ?? []).length > 0),
+    ...Object.keys(groupedTasks).filter((category) => !categoryMeta.some((item) => item.category === category)),
+  ];
   const isExpanded = (category: string, index: number) => expanded[category] ?? index === 0;
 
   return (
     <div className="chore-select-screen">
       <header className="chore-select-header">
         <h1>이번 주 할 일을 선택해요{weekLabel ? ` (${weekLabel})` : ""}</h1>
-        <p>원하는 카테고리에서 추가할 할 일을 선택해주세요</p>
+        <p>
+          원하는 카테고리에서 추가할 할 일을 선택해주세요.
+          <br />
+          파트너 연결 시 파트너가 선택한 항목과 합쳐져요. (중복 가능)
+        </p>
       </header>
 
       {choreMode === "repeat" ? (
@@ -3122,49 +3378,49 @@ function ChoreSelectScreen({
           <input type="checkbox" checked={allSelected} onChange={onToggleAll} />
           <span>전체 선택/해제</span>
         </label>
-        <strong>전체 {selectedCount}개 선택됨</strong>
+        <strong>{selectedCount}개 선택됨</strong>
       </div>
 
       <div className="chore-category-list">
         {categories.map((category, index) => {
           const categoryTasks = groupedTasks[category] ?? [];
-          const selectedInCategory = categoryTasks.filter((task) => task.selected).length;
+          const allInCategorySelected = categoryTasks.length > 0 && categoryTasks.every((task) => task.selected);
           const open = isExpanded(category, index);
           const iconKey = categoryTasks[0]?.iconKey ?? iconKeyForCategory(category);
 
           return (
             <section className="chore-category-card" key={category}>
-              <div className="chore-category-head">
-                <button
-                  className="chore-category-toggle"
-                  type="button"
-                  onClick={() => setExpanded((current) => ({ ...current, [category]: !open }))}
+              <div
+                className="chore-category-head"
+                role="button"
+                tabIndex={0}
+                onClick={() => setExpanded((current) => ({ ...current, [category]: !open }))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setExpanded((current) => ({ ...current, [category]: !open }));
+                  }
+                }}
+              >
+                <label
+                  className="chore-category-check"
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
-                  <span className="chore-category-title">
-                    {taskIconMap[iconKey] ? (
-                      <span className="task-icon"><AssetImage src={taskIconMap[iconKey]} alt="" /></span>
-                    ) : null}
-                    <strong>{category}</strong>
-                  </span>
-                </button>
-                <span className="chore-category-meta">
-                  <button
-                    className="chore-category-all"
-                    type="button"
-                    onClick={() => onToggleCategory(category)}
-                  >
-                    전체 선택/해제
-                  </button>
-                  <em>{selectedInCategory}</em>
-                  <button
-                    className="chore-chevron-button"
-                    type="button"
-                    aria-label={open ? "접기" : "펼치기"}
-                    onClick={() => setExpanded((current) => ({ ...current, [category]: !open }))}
-                  >
-                    {open ? "▲" : "▼"}
-                  </button>
+                  <input
+                    type="checkbox"
+                    checked={allInCategorySelected}
+                    onChange={() => onToggleCategory(category)}
+                    aria-label={`${category} 전체 선택`}
+                  />
+                </label>
+                <span className="chore-category-title">
+                  {taskIconMap[iconKey] ? (
+                    <span className="task-icon"><AssetImage src={taskIconMap[iconKey]} alt="" /></span>
+                  ) : null}
+                  <strong>{category}</strong>
                 </span>
+                <span className="chore-chevron" aria-hidden>{open ? "▲" : "▼"}</span>
               </div>
 
               {open ? (
@@ -3373,6 +3629,51 @@ function HomeAddChoreSheet({
   );
 }
 
+function homeDoneDateKey(iso: string | null | undefined) {
+  const source = iso ? new Date(iso) : new Date();
+  const date = Number.isNaN(source.getTime()) ? new Date() : source;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function homeDoneDateLabel(iso: string | null | undefined) {
+  const key = homeDoneDateKey(iso);
+  const todayKey = homeDoneDateKey(new Date().toISOString());
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = homeDoneDateKey(yesterday.toISOString());
+  if (key === todayKey) return "오늘";
+  if (key === yesterdayKey) return "어제";
+  const [year, month, day] = key.split("-");
+  return `${year}.${month}.${day}`;
+}
+
+function sortHomeDoneTasks(tasks: AppTask[]) {
+  return [...tasks].sort((a, b) => {
+    const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+    const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+}
+
+function groupHomeDoneTasks(tasks: AppTask[]) {
+  const groups: { key: string; label: string; tasks: AppTask[] }[] = [];
+  for (const task of sortHomeDoneTasks(tasks)) {
+    const key = homeDoneDateKey(task.completedAt);
+    const last = groups[groups.length - 1];
+    if (last?.key === key) {
+      last.tasks.push(task);
+    } else {
+      groups.push({ key, label: homeDoneDateLabel(task.completedAt), tasks: [task] });
+    }
+  }
+  return groups;
+}
+
+const HOME_DONE_PREVIEW_LIMIT = 5;
+
 function HomeScreen({
   tasks,
   progress,
@@ -3411,17 +3712,24 @@ function HomeScreen({
   onCastleExplain: () => void;
 }) {
   const [doneTab, setDoneTab] = useState<"me" | "partner">("partner");
+  const [doneExpanded, setDoneExpanded] = useState(false);
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(() => new Set());
   const [editMode, setEditMode] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
+  const homeScrollRef = useRef<HTMLDivElement>(null);
 
   const level = Math.min(10, Math.max(1, castleLevel || 1));
   const doneMine = tasks.filter((task) => task.done && task.assignee === "me");
   const donePartner = tasks.filter((task) => task.done && task.assignee === "partner");
   const incomplete = tasks.filter((task) => !task.done);
   const visibleDone = doneTab === "me" ? doneMine : donePartner;
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const sortedDone = sortHomeDoneTasks(visibleDone);
+  const previewDone = doneExpanded ? sortedDone : sortedDone.slice(0, HOME_DONE_PREVIEW_LIMIT);
+  const doneGroups = groupHomeDoneTasks(previewDone);
+  const showDoneMore = !doneExpanded && sortedDone.length > HOME_DONE_PREVIEW_LIMIT;
+  const partnerName = partnerDisplayName(partnerProfile);
 
   const incompleteGroups = incomplete.reduce<Record<string, AppTask[]>>((acc, task) => {
     const key = normalizeCategory(task.category);
@@ -3432,8 +3740,25 @@ function HomeScreen({
   const reactionButtons = [
     { value: "💗", src: reactionHeartPink, label: "💗" },
     { value: "👍", src: reactionLike, label: "👍" },
-    { value: "⭐", src: reactionStar, label: "⭐" },
   ];
+
+  const switchDoneTab = (tab: "me" | "partner") => {
+    setDoneTab(tab);
+    setDoneExpanded(false);
+  };
+
+  const handleUncomplete = (id: string) => {
+    if (cancellingIds.has(id)) return;
+    setCancellingIds((current) => new Set(current).add(id));
+    window.setTimeout(() => {
+      onUncomplete(id);
+      setCancellingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }, 220);
+  };
 
   const startEditTask = (task: AppTask) => {
     setEditingTaskId(task.id);
@@ -3455,31 +3780,38 @@ function HomeScreen({
     setEditingTitle("");
   };
 
+  const scrollHomeToTop = () => {
+    homeScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   return (
     <div className="home-screen">
-      <header className="home-topbar">
-        <div className="home-title-block">
-          <strong>우리의 이번 주</strong>
-          <span>{formatHomeWeekRange(weekStart, weekEnd)}</span>
-        </div>
-        <button className="home-bell" aria-label="알림" type="button" onClick={onNotifications}>
-          <AssetImage src={unreadCount > 0 ? commonNotificationTrue : commonNotification} alt="" />
-        </button>
-      </header>
+      <div className="home-sticky-head">
+        <header className="home-topbar">
+          <div className="home-title-block">
+            <strong>우리의 이번 주</strong>
+            <span>{formatHomeWeekRange(weekStart, weekEnd)}</span>
+          </div>
+          <button className="home-bell" aria-label="알림" type="button" onClick={onNotifications}>
+            <AssetImage src={unreadCount > 0 ? commonNotificationTrue : commonNotification} alt="" />
+          </button>
+        </header>
 
-      <section className="home-castle">
-        <div className="home-castle-badge">{level}단계 · {progress}%</div>
-        <button className="home-castle-info" aria-label="완수율 안내" type="button" onClick={onCastleExplain}>
-          <AssetImage src={commonInfo} alt="" />
-        </button>
-        <div className="home-castle-visual">
-          <AssetImage src={castleSrcForWeek(weekStart, progress)} alt={`${level}단계 성`} />
-        </div>
-      </section>
+        <section className="home-castle">
+          <div className="home-castle-badge">{level}단계 · {progress}%</div>
+          <button className="home-castle-info" aria-label="완수율 안내" type="button" onClick={onCastleExplain}>
+            <AssetImage src={commonInfo} alt="" />
+          </button>
+          <div className="home-castle-visual">
+            <AssetImage src={castleSrcForWeek(weekStart, progress)} alt={`${level}단계 성`} />
+          </div>
+        </section>
+      </div>
 
+      <div className="home-scroll-body" ref={homeScrollRef}>
       <section className="home-done-section">
         <div className="home-section-head">
-          <h3>완료 <em>{completeCount}개</em></h3>
+          <h3>우리가 완료한 일 <em>{completeCount}개</em></h3>
         </div>
 
         <div className="home-done-tabs" role="tablist">
@@ -3487,7 +3819,7 @@ function HomeScreen({
             className={doneTab === "me" ? "active" : ""}
             role="tab"
             type="button"
-            onClick={() => setDoneTab("me")}
+            onClick={() => switchDoneTab("me")}
           >
             내가 한 일
           </button>
@@ -3495,7 +3827,7 @@ function HomeScreen({
             className={doneTab === "partner" ? "active" : ""}
             role="tab"
             type="button"
-            onClick={() => setDoneTab("partner")}
+            onClick={() => switchDoneTab("partner")}
           >
             {subjectParticleName(partnerName)} 한 일
           </button>
@@ -3511,55 +3843,74 @@ function HomeScreen({
         {visibleDone.length === 0 ? (
           <p className="home-empty">아직 완료한 일이 없어요</p>
         ) : (
-          <ul className="home-done-list">
-            {visibleDone.map((task) => (
-              <li key={task.id}>
-                {doneTab === "me" ? (
-                  <button
-                    className="home-done-item clickable"
-                    type="button"
-                    onClick={() => onUncomplete(task.id)}
-                  >
-                    <AssetImage src={commonCheckboxFilled} alt="" />
-                    <span>{task.title}</span>
-                  </button>
-                ) : (
-                  <>
-                    <div className="home-done-item">
-                      <AssetImage src={commonCheckboxFilled} alt="" />
-                      <span>{task.title}</span>
-                    </div>
-                    <div className="home-reaction-row">
-                      {reactionButtons.map((item) => (
-                        <button
-                          aria-label={`${item.label} 리액션`}
-                          disabled={task.reacted}
-                          key={item.value}
-                          type="button"
-                          onClick={() => onReact(task.id, task.title, item.value, item.label)}
-                        >
-                          <AssetImage src={item.src} alt="" />
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="home-done-list">
+              {doneGroups.map((group) => (
+                <li className="home-done-group" key={group.key}>
+                  <p className="home-done-date">{group.label}</p>
+                  <ul className="home-done-group-list">
+                    {group.tasks.map((task) => {
+                      const cancelling = cancellingIds.has(task.id);
+                      return (
+                        <li key={task.id}>
+                          {doneTab === "me" ? (
+                            <button
+                              className={`home-done-item clickable${cancelling ? " is-cancelled" : ""}`}
+                              type="button"
+                              onClick={() => handleUncomplete(task.id)}
+                            >
+                              <AssetImage src={cancelling ? commonCheckboxOutline : commonCheckboxFilled} alt="" />
+                              <span>{task.title}</span>
+                            </button>
+                          ) : (
+                            <div className="home-done-partner-row">
+                              <span className="home-done-partner-title">{task.title}</span>
+                              <div className="home-reaction-row">
+                                {reactionButtons.map((item) => {
+                                  const selected = task.myReaction === item.value;
+                                  const locked = Boolean(task.myReaction);
+                                  return (
+                                    <button
+                                      aria-label={`${item.label} 리액션`}
+                                      className={selected ? "is-selected" : locked ? "is-dimmed" : undefined}
+                                      disabled={locked}
+                                      key={item.value}
+                                      type="button"
+                                      onClick={() => onReact(task.id, task.title, item.value, item.label)}
+                                    >
+                                      <AssetImage src={item.src} alt="" />
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+            {showDoneMore ? (
+              <button className="home-done-more" type="button" onClick={() => setDoneExpanded(true)}>
+                더보기
+              </button>
+            ) : null}
+          </>
         )}
       </section>
 
       <section className="home-todo-section">
         <div className="home-section-head">
-          <h3>미완료 <em>{incomplete.length}개</em></h3>
+          <h3>우리가 해야할 일 <em>{incomplete.length}개</em></h3>
           {editMode ? (
             <div className="home-edit-actions">
               <button className="home-add-button" type="button" onClick={onAdd}>추가</button>
               <button className="home-done-edit-button" type="button" onClick={exitEditMode}>완료</button>
             </div>
           ) : (
-            <button className="home-edit-button" type="button" onClick={() => setEditMode(true)}>수정</button>
+            <button className="home-edit-button" type="button" onClick={() => setEditMode(true)}>편집</button>
           )}
         </div>
 
@@ -3646,6 +3997,24 @@ function HomeScreen({
           })
         )}
       </section>
+      </div>
+
+      <button
+        aria-label="맨 위로"
+        className="home-topup"
+        type="button"
+        onClick={scrollHomeToTop}
+      >
+        <svg aria-hidden="true" fill="none" height="18" viewBox="0 0 18 18" width="18">
+          <path
+            d="M4.5 10.5L9 6l4.5 4.5"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2.2"
+          />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -3705,7 +4074,7 @@ function LetterWriteScreen({
 }) {
   const meaningfulLength = body.replace(/\s/g, "").length;
   const canSend = meaningfulLength >= 1;
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const partnerName = partnerDisplayName(partnerProfile);
   const todayLabel = new Date().toLocaleDateString("ko-KR", {
     year: "numeric",
     month: "long",
@@ -3742,7 +4111,7 @@ function LetterWriteScreen({
 
       <div className="instant-recipient-card">
         <span className="instant-recipient-avatar">
-          <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
+          <AvatarMark value={partnerAvatarId(partnerProfile)} />
         </span>
         <div>
           <em>받는 사람</em>
@@ -3813,6 +4182,7 @@ function WeeklyLetterScreen({
   onOpenAi,
   onEmpty,
   onSend,
+  onLater,
 }: {
   body: string;
   reaction: string;
@@ -3825,10 +4195,11 @@ function WeeklyLetterScreen({
   onOpenAi: () => void;
   onEmpty: () => void;
   onSend: () => void;
+  onLater: () => void;
 }) {
   const meaningfulLength = body.replace(/\s/g, "").length;
   const canSend = meaningfulLength >= 1;
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const partnerName = partnerDisplayName(partnerProfile);
   const castleSrc = castleSrcForWeek(weekStart, progress);
 
   const handleBodyChange = (value: string) => {
@@ -3865,23 +4236,26 @@ function WeeklyLetterScreen({
         </h2>
         <p className="weekly-letter-subtitle">{partnerName}에게 이번 주 고마움을 전해봐요</p>
 
-        <div className="weekly-recipient-card" aria-readonly="true">
-          <div className="weekly-recipient-main">
-            <span className="weekly-recipient-avatar">
-              <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
-            </span>
-            <div className="weekly-recipient-text">
-              <em>받는 사람</em>
-              <strong>{partnerName}</strong>
-            </div>
-            <AssetImage src={reactionHeartPink} alt="" />
+        <div className="instant-recipient-card weekly-letter-recipient">
+          <span className="instant-recipient-avatar">
+            <AvatarMark value={partnerAvatarId(partnerProfile)} />
+          </span>
+          <div>
+            <em>받는 사람</em>
+            <strong>{partnerName}</strong>
           </div>
+          <AssetImage src={reactionHeartPink} alt="" />
         </div>
 
-        <button className="weekly-ai-button" type="button" onClick={onOpenAi}>
-          <AssetImage src={commonAi} alt="" />
-          말문 틔우기(AI)
-        </button>
+        <div className="weekly-ai-wrap">
+          <span className="weekly-ai-bubble" aria-hidden>
+            {subjectParticleName(partnerName)} 한 일 요약을 확인해 보세요
+          </span>
+          <button className="weekly-ai-button weekly-ai-button-solid" type="button" onClick={onOpenAi}>
+            <AssetImage src={commonAi} alt="" />
+            말문 틔우기(AI)
+          </button>
+        </div>
 
         <div className="weekly-letter-field">
           <textarea
@@ -3893,7 +4267,7 @@ function WeeklyLetterScreen({
         </div>
 
         <div className="weekly-sticker-block">
-          <span>스티커 (선택)</span>
+          <span>스티커 붙이기 (선택)</span>
           <div className="weekly-sticker-row">
             {reactionOptions.map((item) => (
               <button
@@ -3910,21 +4284,26 @@ function WeeklyLetterScreen({
           </div>
         </div>
 
-        <button
-          className={canSend ? "weekly-send-button active" : "weekly-send-button"}
-          type="button"
-          aria-disabled={!canSend}
-          onClick={() => {
-            if (!canSend) {
-              onEmpty();
-              return;
-            }
-            onSend();
-          }}
-        >
-          <AssetImage src={reactionLetter} alt="" />
-          {canSend ? "전송하고 완성된 성 보기" : "편지 보내고 성 완성하기"}
-        </button>
+        <div className="weekly-letter-actions">
+          <button className="weekly-later-button" type="button" onClick={onLater}>
+            나중에 작성하기
+          </button>
+          <button
+            className={canSend ? "weekly-send-button active" : "weekly-send-button"}
+            type="button"
+            aria-disabled={!canSend}
+            onClick={() => {
+              if (!canSend) {
+                onEmpty();
+                return;
+              }
+              onSend();
+            }}
+          >
+            <AssetImage src={reactionLetter} alt="" />
+            {canSend ? "전송하고 완성된 성 보기" : "편지 보내고 성 완성하기"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -3941,7 +4320,7 @@ function SentScreen({
   onHome: () => void;
   onWriteAgain: () => void;
 }) {
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const partnerName = partnerDisplayName(partnerProfile);
   const preview = letter?.body ?? "";
 
   return (
@@ -3961,7 +4340,7 @@ function SentScreen({
       <article className="letter-sent-preview">
         <div className="letter-sent-preview-head">
           <span className="letter-sent-avatar">
-            <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-mint"} />
+            <AvatarMark value={partnerAvatarId(partnerProfile)} />
           </span>
           <div>
             <em>받는 사람</em>
@@ -4336,17 +4715,104 @@ function formatLetterDayLabel(letter: AppLetter) {
   return letter.date;
 }
 
+const REPORT_DONUT_COLORS = ["#FDC9D8", "#CDBAF4", "#FEEC99", "#CAF5BB", "#BFDFFD"] as const;
+
+function buildReportCategorySlices(tasks: AppTask[]) {
+  const doneTasks = tasks.filter((task) => task.done);
+  const counts = new Map<string, number>();
+  for (const task of doneTasks) {
+    const category = normalizeCategory(task.category);
+    counts.set(category, (counts.get(category) ?? 0) + 1);
+  }
+
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "ko"));
+  const totalDone = doneTasks.length;
+  if (totalDone === 0 || sorted.length === 0) return [] as { label: string; count: number; percent: number; color: string }[];
+
+  const top = sorted.slice(0, 4);
+  const rest = sorted.slice(4);
+  const slices = top.map(([label, count], index) => ({
+    label,
+    count,
+    percent: Math.round((count / totalDone) * 1000) / 10,
+    color: REPORT_DONUT_COLORS[index] ?? REPORT_DONUT_COLORS[4],
+  }));
+
+  if (rest.length > 0) {
+    const restCount = rest.reduce((sum, [, count]) => sum + count, 0);
+    slices.push({
+      label: `외 ${rest.length}개`,
+      count: restCount,
+      percent: Math.round((restCount / totalDone) * 1000) / 10,
+      color: REPORT_DONUT_COLORS[4],
+    });
+  }
+
+  return slices;
+}
+
+function ReportDonutChart({ slices }: { slices: { label: string; count: number; percent: number; color: string }[] }) {
+  const size = 220;
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = 72;
+  const stroke = 28;
+  const total = slices.reduce((sum, slice) => sum + slice.count, 0) || 1;
+  let angle = -Math.PI / 2;
+
+  const arcs = slices.map((slice) => {
+    const sweep = (slice.count / total) * Math.PI * 2;
+    const start = angle;
+    const end = angle + Math.min(sweep, Math.PI * 2 - 0.0001);
+    angle += sweep;
+    const large = sweep > Math.PI ? 1 : 0;
+    const x1 = cx + radius * Math.cos(start);
+    const y1 = cy + radius * Math.sin(start);
+    const x2 = cx + radius * Math.cos(end);
+    const y2 = cy + radius * Math.sin(end);
+    const mid = start + sweep / 2;
+    const labelR = radius + 34;
+    const fullCircle = slice.count === total;
+    return {
+      ...slice,
+      fullCircle,
+      d: `M ${x1} ${y1} A ${radius} ${radius} 0 ${large} 1 ${x2} ${y2}`,
+      labelX: cx + labelR * Math.cos(mid),
+      labelY: cy + labelR * Math.sin(mid),
+    };
+  });
+
+  return (
+    <svg className="weekly-report-donut" viewBox={`0 0 ${size} ${size}`} role="img" aria-label="카테고리별 완료 비율">
+      {arcs.length === 0 ? (
+        <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#efe8f2" strokeWidth={stroke} />
+      ) : arcs.map((arc) => (
+        <g key={arc.label}>
+          {arc.fullCircle ? (
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke={arc.color} strokeWidth={stroke} />
+          ) : (
+            <path d={arc.d} fill="none" stroke={arc.color} strokeWidth={stroke} strokeLinecap="butt" />
+          )}
+          <text x={arc.labelX} y={arc.labelY} textAnchor="middle" dominantBaseline="middle" className="weekly-report-donut-label">
+            {arc.count} {arc.percent.toFixed(1)}%
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 function StatsScreen({
   progress,
   completeCount,
   totalCount,
-  meDone,
-  partnerDone,
   tasks,
   weekStart,
   weekEnd,
   complete,
   weekStreak,
+  letterCount,
+  reactionCount,
   myLetter,
   partnerLetter,
   selectedEmoji,
@@ -4367,6 +4833,8 @@ function StatsScreen({
   weekEnd: string;
   complete: boolean;
   weekStreak: number;
+  letterCount: number;
+  reactionCount: number;
   myLetter: AppLetter | null;
   partnerLetter: AppLetter | null;
   selectedEmoji: string;
@@ -4379,32 +4847,26 @@ function StatsScreen({
 }) {
   const level = castleStageFromRate(progress);
   const castleSrc = castleSrcForWeek(weekStart, progress);
-  const doneTotal = meDone + partnerDone;
-  const mePercent = doneTotal === 0 ? 0 : Math.round((meDone / doneTotal) * 100);
-  const partnerPercent = doneTotal === 0 ? 0 : 100 - mePercent;
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
-  const mvpLabel = doneTotal === 0
-    ? null
-    : meDone === partnerDone
-      ? "공동 MVP"
-      : partnerDone > meDone
-        ? `${partnerName} MVP`
-        : "나 MVP";
+  const partnerName = partnerDisplayName(partnerProfile);
   const myTasks = tasks.filter((task) => task.done && task.assignee === "me");
   const partnerTasks = tasks.filter((task) => task.done && task.assignee === "partner");
-  const summaryText = complete || progress >= 100
-    ? `🎉 이번 주 집안일 100% 완료! 둘이 합쳐 ${completeCount}개를 해냈어요. 우리 집이 완공됐어요! 🏰`
-    : `🎉 이번 주 집안일 ${progress}% 완료! 둘이 함께 ${completeCount}개를 해냈어요. ${partnerName}의 편지가 오면 우리 집을 완공해요 🏰`;
+  const categorySlices = buildReportCategorySlices(tasks);
+  const hasTasks = totalCount > 0;
   const nextWeekSub = complete || progress >= 100
     ? "100% 완성! 다음 성도 지으러 가요"
     : "꾸준히 함께하고 있어요. 다음 주도 화이팅";
+  const showBack = entry === "castle";
+  const [expandedMeChores, setExpandedMeChores] = useState(false);
+  const [expandedPartnerChores, setExpandedPartnerChores] = useState(false);
 
   return (
     <div className={`weekly-report-screen${entry === "castle" ? " with-tab" : " with-cta"}`}>
-      <header className="weekly-report-header">
-        <button className="weekly-report-back" type="button" disabled={isSaving} onClick={onBack}>
-          {isSaving ? "준비 중..." : "< 뒤로"}
-        </button>
+      <header className={`weekly-report-header${showBack ? "" : " no-back"}`}>
+        {showBack ? (
+          <button className="weekly-report-back" type="button" disabled={isSaving} onClick={onBack}>
+            {isSaving ? "준비 중..." : "< 뒤로"}
+          </button>
+        ) : null}
         <div className="weekly-report-title-block">
           <span className="weekly-report-range">{formatReportWeekRange(weekStart, weekEnd)}</span>
           <strong>주간 완료 리포트</strong>
@@ -4420,53 +4882,42 @@ function StatsScreen({
           <AssetImage src={castleSrc} alt={`${level}단계 성`} />
         </div>
 
-        <div className="weekly-report-summary">
-          <AssetImage src={reactionParty} alt="" />
-          <p>{summaryText}</p>
-        </div>
+        <section className="weekly-report-ours">
+          <h3>
+            <span className="weekly-report-ours-icon">
+              <AssetImage src={avatarMint} alt="" />
+            </span>
+            우리의 기록 <em>(이번 주 요약)</em>
+          </h3>
 
-        <div className="weekly-report-stats" aria-hidden>
-          <div className="weekly-stat-card">
-            <strong className="green">{completeCount}개</strong>
-            <em>{completeCount} / {totalCount || 0}개</em>
-            <span>완료</span>
-          </div>
-          <div className="weekly-stat-card">
-            <strong className="pink">{mePercent}%</strong>
-            <em>{meDone}개</em>
-            <span>내 기여</span>
-          </div>
-          <div className="weekly-stat-card">
-            <strong className="purple">{partnerPercent}%</strong>
-            <em>{partnerDone}개</em>
-            <span>{partnerName}</span>
-          </div>
-        </div>
+          {hasTasks ? (
+            <p className="weekly-report-ours-count">{completeCount} / {totalCount}개 완료</p>
+          ) : (
+            <p className="weekly-report-ours-empty">이번 주 설정된 할일이 없어요</p>
+          )}
 
-        <section className="weekly-report-section">
-          <div className="weekly-report-section-head">
-            <h3>
-              <AssetImage src={commonStatistics} alt="" />
-              기여도
-            </h3>
-            {mvpLabel && <span className="weekly-mvp-badge">✨ {mvpLabel}</span>}
-          </div>
-          <div className="weekly-contrib-bar" aria-hidden>
-            <span className="me" style={{ width: `${Math.max(mePercent, doneTotal === 0 ? 0 : 4)}%` }} />
-            <span className="partner" style={{ width: `${Math.max(partnerPercent, doneTotal === 0 ? 0 : 4)}%` }} />
-          </div>
-          <div className="weekly-contrib-legend">
-            <div>
-              <i className="dot me" />
-              <span>나</span>
-              <b className="bar me" style={{ width: `${mePercent}%` }} />
-              <em>{meDone}개 · {mePercent}%</em>
+          {hasTasks && categorySlices.length > 0 ? (
+            <>
+              <ReportDonutChart slices={categorySlices} />
+              <ul className="weekly-report-legend">
+                {categorySlices.map((slice) => (
+                  <li key={slice.label}>
+                    <i style={{ background: slice.color }} />
+                    <span>{slice.label}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+
+          <div className="weekly-report-exchange">
+            <div className="weekly-report-exchange-card">
+              <AssetImage src={reactionLetter} alt="" />
+              <span>편지 {letterCount}회</span>
             </div>
-            <div>
-              <i className="dot partner" />
-              <span>{partnerName}</span>
-              <b className="bar partner" style={{ width: `${partnerPercent}%` }} />
-              <em>{partnerDone}개 · {partnerPercent}%</em>
+            <div className="weekly-report-exchange-card">
+              <AssetImage src={reactionLike} alt="" />
+              <span>리액션 {reactionCount}회</span>
             </div>
           </div>
         </section>
@@ -4477,7 +4928,7 @@ function StatsScreen({
             <ul>
               {myTasks.length === 0 ? (
                 <li className="empty">완료한 일이 없어요</li>
-              ) : myTasks.map((task) => (
+              ) : (expandedMeChores ? myTasks : myTasks.slice(0, 5)).map((task) => (
                 <li key={task.id}>
                   <span className="task-icon">
                     <AssetImage src={taskIconMap[task.iconKey ?? iconKeyForCategory(task.category)]} alt="" />
@@ -4487,13 +4938,22 @@ function StatsScreen({
                 </li>
               ))}
             </ul>
+            {!expandedMeChores && myTasks.length > 5 ? (
+              <button
+                className="weekly-report-more"
+                type="button"
+                onClick={() => setExpandedMeChores(true)}
+              >
+                더보기 <span aria-hidden>▼</span>
+              </button>
+            ) : null}
           </div>
           <div>
             <h4><i className="dot partner" /> {subjectParticleName(partnerName)} 한 일</h4>
             <ul>
               {partnerTasks.length === 0 ? (
                 <li className="empty">완료한 일이 없어요</li>
-              ) : partnerTasks.map((task) => (
+              ) : (expandedPartnerChores ? partnerTasks : partnerTasks.slice(0, 5)).map((task) => (
                 <li key={task.id}>
                   <span className="task-icon">
                     <AssetImage src={taskIconMap[task.iconKey ?? iconKeyForCategory(task.category)]} alt="" />
@@ -4503,6 +4963,15 @@ function StatsScreen({
                 </li>
               ))}
             </ul>
+            {!expandedPartnerChores && partnerTasks.length > 5 ? (
+              <button
+                className="weekly-report-more"
+                type="button"
+                onClick={() => setExpandedPartnerChores(true)}
+              >
+                더보기 <span aria-hidden>▼</span>
+              </button>
+            ) : null}
           </div>
         </section>
 
@@ -4543,7 +5012,7 @@ function StatsScreen({
             </div>
             <div className="weekly-letter-side">
               <span className="label">
-                <AvatarMark value={partnerProfile?.avatarEmoji ?? "avatar-queen"} />
+                <AvatarMark value={partnerAvatarId(partnerProfile)} />
                 {subjectParticleName(partnerName)} 쓴 편지
               </span>
               {partnerLetter ? (
@@ -4613,6 +5082,7 @@ function LettersScreen({
   reactions,
   partnerProfile,
   nickname,
+  selectedEmoji,
   focusAt,
   onSelectLetter,
   onSelectReaction,
@@ -4622,6 +5092,7 @@ function LettersScreen({
   reactions: AppReaction[];
   partnerProfile: AppPartnerProfile | null;
   nickname: string;
+  selectedEmoji: string;
   focusAt?: string | null;
   onSelectLetter: (letter: AppLetter) => void;
   onSelectReaction: (reaction: AppReaction) => void;
@@ -4647,8 +5118,10 @@ function LettersScreen({
 
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const startWeekday = new Date(viewYear, viewMonth, 1).getDay();
-  const partnerName = partnerProfile?.nickname?.trim() || "파트너";
+  const partnerName = partnerDisplayName(partnerProfile);
   const myName = nickname.trim() || "나";
+  const myAvatar = resolveAvatarId(selectedEmoji);
+  const partnerAvatar = partnerAvatarId(partnerProfile);
 
   const filteredLetters = letters.filter((letter) => (tab === "me" ? letter.from === "me" : letter.from === "partner"));
   const filteredReactions = reactions.filter((reaction) => (tab === "me" ? reaction.from === "me" : reaction.from === "partner"));
@@ -4697,7 +5170,7 @@ function LettersScreen({
     <div className="letters-screen">
       <header className="letters-title">
         <strong>
-          편지 모아
+          마음 모아
           <AssetImage src={reactionLetter} alt="" />
         </strong>
       </header>
@@ -4710,7 +5183,7 @@ function LettersScreen({
           onClick={() => setTab("partner")}
         >
           <AssetImage src={reactionHeartPurple} alt="" />
-          {subjectParticleName(partnerName)} 보낸 편지
+          받은 마음
         </button>
         <button
           className={tab === "me" ? "active" : ""}
@@ -4719,7 +5192,7 @@ function LettersScreen({
           onClick={() => setTab("me")}
         >
           <AssetImage src={reactionHeartPink} alt="" />
-          내가 보낸 편지
+          보낸 마음
         </button>
       </div>
 
@@ -4744,11 +5217,13 @@ function LettersScreen({
             const day = index + 1;
             const weekday = new Date(viewYear, viewMonth, day).getDay();
             const markers = markersByDay.get(day) ?? [];
+            const isSelected = selectedDay === day;
             return (
               <button
                 className={[
                   "letters-day",
-                  selectedDay === day ? "selected" : "",
+                  isSelected ? "selected" : "",
+                  markers.length > 0 ? "has-stamp" : "",
                   weekday === 0 ? "sun" : "",
                   weekday === 6 ? "sat" : "",
                 ].filter(Boolean).join(" ")}
@@ -4761,13 +5236,13 @@ function LettersScreen({
               >
                 <em>{day}</em>
                 {markers.length > 0 && (
-                  <span className="letters-day-markers">
+                  <span className="letters-day-markers" aria-hidden>
                     {markers.map((marker, markerIndex) => (
                       <i key={`${day}-${markerIndex}`} className={marker.kind === "letter" ? "letter" : "reaction"}>
                         {marker.kind === "letter" ? (
                           <AssetImage src={reactionLetter} alt="" />
                         ) : (
-                          marker.value || "💕"
+                          <AssetImage src={reactionStar} alt="" />
                         )}
                       </i>
                     ))}
@@ -4817,13 +5292,18 @@ function LettersScreen({
             {dayReactions.map((reaction) => (
               <li key={reaction.id}>
                 <button className="letters-feed-card reaction" type="button" onClick={() => onSelectReaction(reaction)}>
-                  <span className="letters-feed-emoji">{reaction.reaction}</span>
+                  <span className="letters-feed-emoji sender">
+                    <AvatarMark value={tab === "partner" ? partnerAvatar : myAvatar} />
+                  </span>
                   <div>
                     <strong>
                       💕 {tab === "partner" ? partnerName : myName} 님이 리액션을 보냈어요
                     </strong>
                     <p>{reaction.choreTitle}</p>
                   </div>
+                  <span className="letters-feed-reaction-mark" aria-hidden>
+                    {reaction.reaction}
+                  </span>
                 </button>
               </li>
             ))}
@@ -5047,15 +5527,10 @@ function CastleExplainScreen({ onBack }: { onBack: () => void }) {
 }
 
 function CastleUpgradeModal({
-  weekStart,
   onClose,
 }: {
-  weekStart?: string;
   onClose: () => void;
 }) {
-  const levels = castleLevelsForWeek(weekStart);
-  const finalLevel = levels[9] ?? castleLevel10;
-
   return (
     <div className="castle-upgrade-overlay" role="presentation" onClick={onClose}>
       <div
@@ -5068,61 +5543,21 @@ function CastleUpgradeModal({
         <div className="castle-upgrade-header">
           <h2 id="castle-upgrade-title">
             <span className="castle-upgrade-title-icon">
-              <AssetImage src={finalLevel} alt="" />
+              <AssetImage src={castleLevel10} alt="" />
             </span>
             성 업그레이드
           </h2>
-          <button className="castle-upgrade-close" type="button" aria-label="닫기" onClick={onClose}>×</button>
         </div>
 
-        <div className="castle-upgrade-stages">
-          <div className="castle-upgrade-row">
-            {levels.slice(0, 3).map((src, index) => (
-              <div className="castle-upgrade-stage" key={`stage-${index + 1}`}>
-                <AssetImage src={src} alt={`${index + 1}단계`} />
-                {index < 2 && <span className="castle-upgrade-arrow">›</span>}
-              </div>
-            ))}
-          </div>
-          <div className="castle-upgrade-row">
-            {levels.slice(3, 6).map((src, index) => (
-              <div className="castle-upgrade-stage" key={`stage-${index + 4}`}>
-                <AssetImage src={src} alt={`${index + 4}단계`} />
-                {index < 2 && <span className="castle-upgrade-arrow">›</span>}
-              </div>
-            ))}
-          </div>
-          <div className="castle-upgrade-row">
-            {levels.slice(6, 8).map((src, index) => (
-              <div className="castle-upgrade-stage" key={`stage-${index + 7}`}>
-                <AssetImage src={src} alt={`${index + 7}단계`} />
-                {index < 1 && <span className="castle-upgrade-arrow">›</span>}
-              </div>
-            ))}
-          </div>
-
-          <div className="castle-upgrade-divider" />
-
-          <div className="castle-upgrade-row final">
-            <div className="castle-upgrade-letter">
-              <AssetImage src={reactionLetter} alt="" />
-            </div>
-            <span className="castle-upgrade-arrow">›</span>
-            <div className="castle-upgrade-stage">
-              <AssetImage src={levels[8]} alt="9단계" />
-            </div>
-            <span className="castle-upgrade-arrow">›</span>
-            <div className="castle-upgrade-stage">
-              <AssetImage src={levels[9]} alt="10단계" />
-            </div>
-          </div>
+        <div className="castle-upgrade-guide-art">
+          <AssetImage src={castleUpgradeGuide} alt="성 업그레이드 1단계부터 10단계 안내" />
         </div>
 
         <p className="castle-upgrade-guide">
           성은 할 일을 12.5% 달성할 때마다 한 단계씩 업그레이드됩니다.
           {"\n"}총 10단계로 구성되어 있으며,
           {"\n"}할 일만으로는 8단계까지 성장할 수 있습니다.
-          {"\n"}최종 9·10단계는 파트너에게 편지를 작성해야 완성할 수 있습니다.
+          {"\n"}최종 9·10단계는 주간 마감 후 파트너에게 편지를 작성해야 완성할 수 있습니다.
         </p>
 
         <button className="castle-upgrade-done" type="button" onClick={onClose}>
@@ -5140,7 +5575,6 @@ function MyPageScreen({
   partnerConnected,
   notificationEnabled,
   onEdit,
-  onManageTasks,
   onConnectPartner,
   onDisconnectPartner,
   onLogout,
@@ -5155,7 +5589,6 @@ function MyPageScreen({
   partnerConnected: boolean;
   notificationEnabled: boolean;
   onEdit: () => void;
-  onManageTasks: () => void;
   onConnectPartner: () => void;
   onDisconnectPartner: () => void;
   onLogout: () => void;
@@ -5226,12 +5659,12 @@ function MyPageScreen({
         <div className="settings-card">
           <div className="settings-partner-row">
             <span className="settings-avatar">
-              <AvatarMark value={partnerConnected ? (partnerProfile?.avatarEmoji ?? "avatar-mint") : "avatar-pink"} />
+              <AvatarMark value={partnerConnected ? partnerAvatarId(partnerProfile) : "avatar-pink"} />
             </span>
             <div className="settings-partner-info">
               <strong>
                 {partnerConnected
-                  ? (partnerProfile?.nickname?.trim() || "파트너")
+                  ? partnerDisplayName(partnerProfile)
                   : "파트너 없음"}
               </strong>
               {partnerConnected ? (
@@ -5267,15 +5700,6 @@ function MyPageScreen({
       <section className="settings-section">
         <h2>집안일 관리</h2>
         <div className="settings-card">
-          <button className="settings-inline-row link" type="button" onClick={onManageTasks}>
-            <span className="settings-row-icon peach"><AssetImage src={taskCooking} alt="" /></span>
-            <div>
-              <strong>이번 주 할 일 수정</strong>
-              <span>추가·삭제·재배정</span>
-            </div>
-            <em className="settings-chevron">›</em>
-          </button>
-          <div className="settings-card-divider" />
           <div className="settings-inline-row">
             <span className="settings-row-icon pink"><AssetImage src={commonRefresh} alt="" /></span>
             <div>
@@ -5611,7 +6035,7 @@ function NotificationsScreen({
                   {!item.read && <i className="notif-dot" aria-hidden />}
                   <span className={`notif-icon ${icon.tone}`}>
                     {icon.kind === "avatar" ? (
-                      <AvatarMark value={resolveAvatarId(partnerProfile?.avatarEmoji)} />
+                      <AvatarMark value={partnerAvatarId(partnerProfile)} />
                     ) : (
                       <AssetImage src={icon.src} alt="" />
                     )}
@@ -6089,7 +6513,7 @@ function Header({ eyebrow, title }: { eyebrow: string; title: string }) {
 function BottomNav({ current, onChange }: { current: Screen; onChange: (screen: Screen) => void }) {
   const items: { screen: Screen; label: string; icon: AssetModule }[] = [
     { screen: "home", label: "홈", icon: bottomNavHome },
-    { screen: "letters", label: "편지", icon: bottomNavCalander },
+    { screen: "letters", label: "마음", icon: bottomNavCalander },
     { screen: "castle", label: "성", icon: bottomNavCastle },
     { screen: "mypage", label: "마이페이지", icon: bottomNavMypage },
   ];

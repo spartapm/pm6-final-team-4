@@ -11,7 +11,9 @@ export type AppTask = {
   assignee: Assignee;
   selected: boolean;
   done: boolean;
+  completedAt?: string | null;
   reacted: boolean;
+  myReaction?: string | null;
 };
 
 export type AppLetter = {
@@ -89,7 +91,7 @@ type WeeklyChoreRow = {
   assignee: Assignee;
   completed_at: string | null;
   completed_by?: string | null;
-  chore_reactions?: { id: string }[];
+  chore_reactions?: { id: string; reaction?: string | null; sender_id?: string | null }[];
 };
 
 type WeeklyStatRow = {
@@ -141,6 +143,11 @@ function mapChoreRow(task: WeeklyChoreRow, viewerUserId?: string | null, partner
     assignee = "none";
   }
 
+  const myReactionRow = viewerUserId
+    ? task.chore_reactions?.find((row) => row.sender_id === viewerUserId)
+    : task.chore_reactions?.[0];
+  const myReaction = myReactionRow?.reaction ?? null;
+
   return {
     id: task.id,
     title: task.title,
@@ -149,7 +156,9 @@ function mapChoreRow(task: WeeklyChoreRow, viewerUserId?: string | null, partner
     assignee,
     selected: true,
     done: Boolean(task.completed_at),
-    reacted: Boolean(task.chore_reactions?.length),
+    completedAt: task.completed_at,
+    reacted: Boolean(myReaction),
+    myReaction,
   };
 }
 
@@ -386,7 +395,7 @@ export async function loadWeeklyChores(
 ): Promise<AppTask[]> {
   const { data, error } = await supabase
     .from("weekly_chores")
-    .select("id,title,category,assignee,completed_at,completed_by,chore_reactions(id)")
+    .select("id,title,category,assignee,completed_at,completed_by,chore_reactions(id,reaction,sender_id)")
     .eq("cycle_id", cycleId)
     .order("created_at", { ascending: true })
     .returns<WeeklyChoreRow[]>();
@@ -403,7 +412,7 @@ export async function loadPreviousCycleChores(
   const { weekStart } = currentWeekRange(-1);
   const { data, error } = await supabase
     .from("weekly_cycles")
-    .select("id,weekly_chores(id,title,category,assignee,completed_at,completed_by,chore_reactions(id))")
+    .select("id,weekly_chores(id,title,category,assignee,completed_at,completed_by,chore_reactions(id,reaction,sender_id))")
     .eq("couple_id", coupleId)
     .eq("week_start", weekStart)
     .maybeSingle<{ id: string; weekly_chores: WeeklyChoreRow[] | null }>();
@@ -416,6 +425,7 @@ export async function loadPreviousCycleChores(
     selected: true,
     done: false,
     reacted: false,
+    myReaction: null,
   }));
 }
 
@@ -455,6 +465,32 @@ export async function replaceWeeklyChores(
     done: false,
     reacted: false,
   }));
+}
+
+/** 기존 할 일을 유지한 채 선택분을 추가(중복 허용). 파트너 연결 후 A-06 합산용 */
+export async function appendWeeklyChores(
+  cycleId: string,
+  userId: string,
+  tasks: AppTask[],
+  viewerUserId?: string | null,
+  partnerUserId?: string | null,
+): Promise<AppTask[]> {
+  const selectedTasks = tasks.filter((task) => task.selected);
+  if (selectedTasks.length > 0) {
+    const { error } = await supabase.from("weekly_chores").insert(
+      selectedTasks.map((task) => ({
+        cycle_id: cycleId,
+        title: task.title,
+        category: normalizeCategory(task.category),
+        assignee: "none" as const,
+        completed_by: null,
+        completed_at: null,
+      })),
+    );
+    if (error) throw error;
+  }
+
+  return loadWeeklyChores(cycleId, viewerUserId ?? userId, partnerUserId);
 }
 
 export async function insertWeeklyChore(cycleId: string, title: string, category = "추가한 일"): Promise<AppTask> {

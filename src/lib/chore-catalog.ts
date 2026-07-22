@@ -46,11 +46,11 @@ export const categoryMeta = [
   { category: "세탁", iconKey: "laundry" as TaskIconKey, iconPath: "icons/task-laundry.svg" },
   { category: "유지보수", iconKey: "toothbrush" as TaskIconKey, iconPath: "icons/task-toothbrush.svg" },
   { category: "구매·재고", iconKey: "shopping-cart" as TaskIconKey, iconPath: "icons/task-shopping-cart.svg" },
-  { category: "일정·정보", iconKey: "note" as TaskIconKey, iconPath: "icons/task-note.svg" },
+  { category: "육아", iconKey: "baby-bottle" as TaskIconKey, iconPath: "icons/task-baby-bottle.svg" },
   { category: "재정·행정", iconKey: "money" as TaskIconKey, iconPath: "icons/task-money.svg" },
   { category: "기타", iconKey: "etc" as TaskIconKey, iconPath: "icons/task-etc.svg" },
   { category: "반려동물·식물", iconKey: "plant" as TaskIconKey, iconPath: "icons/task-plant.svg" },
-  { category: "육아", iconKey: "baby-bottle" as TaskIconKey, iconPath: "icons/task-baby-bottle.svg" },
+  { category: "일정·정보", iconKey: "note" as TaskIconKey, iconPath: "icons/task-note.svg" },
 ];
 
 /** @deprecated use categoryMeta — kept for template edit category list */
@@ -70,68 +70,87 @@ const legacyCategoryMap: Record<string, string> = {
 
 /** 기본 할 일 템플릿 (A-06 / 템플릿 관리 default) */
 const catalogItems: { category: string; iconKey: TaskIconKey; title: string }[] = [
+  // 청소
   { category: "청소", iconKey: "sweep", title: "바닥 청소하기" },
   { category: "청소", iconKey: "sweep", title: "화장실 청소하기" },
-  { category: "청소", iconKey: "sweep", title: "설거지하기" },
   { category: "청소", iconKey: "sweep", title: "분리수거하기" },
-  { category: "청소", iconKey: "sweep", title: "싱크대 청소하기" },
+  { category: "청소", iconKey: "sweep", title: "일반 쓰레기 버리기" },
+  { category: "청소", iconKey: "sweep", title: "물걸레질하기" },
+  { category: "청소", iconKey: "sweep", title: "로봇청소기 동작하기" },
 
+  // 정리정돈
   { category: "정리정돈", iconKey: "package", title: "침구 정리하기" },
-  { category: "정리정돈", iconKey: "package", title: "현관 정리하기" },
-  { category: "정리정돈", iconKey: "package", title: "옷장·서랍 정리하기" },
+  { category: "정리정돈", iconKey: "package", title: "현관 물품 정리하기" },
+  { category: "정리정돈", iconKey: "package", title: "옷장정리하기" },
+  { category: "정리정돈", iconKey: "package", title: "서랍 정리하기" },
+  { category: "정리정돈", iconKey: "package", title: "계절옷 넣어두기" },
   { category: "정리정돈", iconKey: "package", title: "테이블 위 정리하기" },
   { category: "정리정돈", iconKey: "package", title: "안 쓰는 물건 비우기" },
 
+  // 요리·식사
   { category: "요리·식사", iconKey: "cooking", title: "식재료 다듬기" },
   { category: "요리·식사", iconKey: "cooking", title: "식사 요리하기" },
   { category: "요리·식사", iconKey: "cooking", title: "저녁 식재료 준비하기" },
   { category: "요리·식사", iconKey: "cooking", title: "도시락 싸기" },
-  { category: "요리·식사", iconKey: "cooking", title: "식기 정리하기" },
+  { category: "요리·식사", iconKey: "cooking", title: "설거지완료 식기 정리하기" },
+  { category: "요리·식사", iconKey: "cooking", title: "설거지하기" },
+  { category: "요리·식사", iconKey: "cooking", title: "싱크대 청소하기" },
+  { category: "요리·식사", iconKey: "cooking", title: "주방 행주·수세미 교체하기" },
 
+  // 세탁
   { category: "세탁", iconKey: "laundry", title: "흰옷 빨래 돌리기" },
   { category: "세탁", iconKey: "laundry", title: "건조기 돌리기" },
-  { category: "세탁", iconKey: "laundry", title: "빨래 개서 정리하기" },
+  { category: "세탁", iconKey: "laundry", title: "빨래 개기" },
   { category: "세탁", iconKey: "laundry", title: "이불 빨래 돌리기" },
   { category: "세탁", iconKey: "laundry", title: "수건 빨래 돌리기" },
 
+  // 유지보수
   { category: "유지보수", iconKey: "toothbrush", title: "에어컨 필터 청소하기" },
   { category: "유지보수", iconKey: "toothbrush", title: "배수구 청소하기" },
   { category: "유지보수", iconKey: "toothbrush", title: "방충망 점검하기" },
   { category: "유지보수", iconKey: "toothbrush", title: "실리콘 곰팡이 점검하기" },
   { category: "유지보수", iconKey: "toothbrush", title: "소모품 교체 시기 확인하기" },
+  { category: "유지보수", iconKey: "toothbrush", title: "필터·건전지 교체 시기 확인하기" },
 
-  { category: "구매·재고", iconKey: "shopping-cart", title: "휴지 재고 확인하기" },
+  // 구매·재고
+  { category: "구매·재고", iconKey: "shopping-cart", title: "휴지 재고 확인 및 주문" },
   { category: "구매·재고", iconKey: "shopping-cart", title: "식재료 재고 확인하기" },
   { category: "구매·재고", iconKey: "shopping-cart", title: "장보기 목록 주문하기" },
   { category: "구매·재고", iconKey: "shopping-cart", title: "세제 재고 확인하기" },
-  { category: "구매·재고", iconKey: "shopping-cart", title: "예산 내 소비 점검하기" },
+  { category: "구매·재고", iconKey: "shopping-cart", title: "샴푸 재고 확인하기" },
+  { category: "구매·재고", iconKey: "shopping-cart", title: "생필품 주문하기" },
 
-  { category: "일정·정보", iconKey: "note", title: "오늘의 집안일 정하기" },
-  { category: "일정·정보", iconKey: "note", title: "이번 주 할 일 점검하기" },
-  { category: "일정·정보", iconKey: "note", title: "가족·파트너 일정 공유하기" },
-  { category: "일정·정보", iconKey: "note", title: "병원·약속 예약 확인하기" },
-  { category: "일정·정보", iconKey: "note", title: "각종 서류 정리하기" },
+  // 육아
+  { category: "육아", iconKey: "baby-bottle", title: "이유식 만들기" },
+  { category: "육아", iconKey: "baby-bottle", title: "젖병 소독하기" },
+  { category: "육아", iconKey: "baby-bottle", title: "예방접종 일정 확인하기" },
+  { category: "육아", iconKey: "baby-bottle", title: "아기 목욕 시키기" },
 
+  // 재정·행정
   { category: "재정·행정", iconKey: "money", title: "공과금 납부하기" },
   { category: "재정·행정", iconKey: "money", title: "관리비 확인하기" },
   { category: "재정·행정", iconKey: "money", title: "가계부 작성하기" },
   { category: "재정·행정", iconKey: "money", title: "정기 구독 서비스 점검하기" },
   { category: "재정·행정", iconKey: "money", title: "보험·계약 갱신일 확인하기" },
+  { category: "재정·행정", iconKey: "money", title: "예산 내 소비 점검하기" },
+  { category: "재정·행정", iconKey: "money", title: "각종 서류 정리하기" },
 
-  { category: "기타", iconKey: "etc", title: "차량 관리하기" },
-  { category: "기타", iconKey: "etc", title: "집들이 준비하기" },
+  // 기타
+  { category: "기타", iconKey: "etc", title: "세차하기" },
+  { category: "기타", iconKey: "etc", title: "차량 정기점검 확인하기" },
 
-  { category: "반려동물·식물", iconKey: "plant", title: "물 챙겨주기" },
+  // 반려동물·식물
+  { category: "반려동물·식물", iconKey: "plant", title: "반려동물 물 챙겨주기" },
   { category: "반려동물·식물", iconKey: "plant", title: "사료 챙겨주기" },
-  { category: "반려동물·식물", iconKey: "plant", title: "용품 청소하기" },
+  { category: "반려동물·식물", iconKey: "plant", title: "반려동물 용품 청소하기" },
   { category: "반려동물·식물", iconKey: "plant", title: "산책 시키기" },
   { category: "반려동물·식물", iconKey: "plant", title: "식물 물 주기" },
 
-  { category: "육아", iconKey: "baby-bottle", title: "이유식 만들기" },
-  { category: "육아", iconKey: "baby-bottle", title: "젖병 소독하기" },
-  { category: "육아", iconKey: "baby-bottle", title: "식기 소독하기" },
-  { category: "육아", iconKey: "baby-bottle", title: "예방접종 일정 확인하기" },
-  { category: "육아", iconKey: "baby-bottle", title: "목욕 시키기" },
+  // 일정·정보
+  { category: "일정·정보", iconKey: "note", title: "이번주 집안일에 대해 의논하기" },
+  { category: "일정·정보", iconKey: "note", title: "가족·파트너 일정 공유하기" },
+  { category: "일정·정보", iconKey: "note", title: "병원·약속 예약 확인하기" },
+  { category: "일정·정보", iconKey: "note", title: "함께 갈 외식·전시 예약하기" },
 ];
 
 export function normalizeCategory(category: string) {

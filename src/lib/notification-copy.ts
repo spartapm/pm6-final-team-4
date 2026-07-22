@@ -46,4 +46,6 @@ export const ONBOARDING_SCREENS = new Set([
   "social",
   "login",
   "invite",
+  "inviteCreate",
+  "inviteEnter",
 ]);
