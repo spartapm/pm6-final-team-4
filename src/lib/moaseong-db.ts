@@ -475,8 +475,10 @@ export async function appendWeeklyChores(
   viewerUserId?: string | null,
   partnerUserId?: string | null,
 ): Promise<AppTask[]> {
-  // 이미 DB에 있는 항목은 다시 insert하지 않음. 신규 선택분만 추가(동일 제목도 별도 행으로 허용).
-  const selectedTasks = tasks.filter((task) => task.selected && !isPersistedId(task.id));
+  // weekly_chores 에 이미 있는 id만 제외. 템플릿 UUID는 별도 행으로 추가(동일 제목 중복 허용).
+  const existing = await loadWeeklyChores(cycleId, viewerUserId ?? userId, partnerUserId);
+  const existingIds = new Set(existing.map((task) => task.id));
+  const selectedTasks = tasks.filter((task) => task.selected && !existingIds.has(task.id));
   if (selectedTasks.length > 0) {
     const { error } = await supabase.from("weekly_chores").insert(
       selectedTasks.map((task) => ({

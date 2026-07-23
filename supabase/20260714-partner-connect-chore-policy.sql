@@ -3,6 +3,7 @@
 -- 양쪽 할 일이 있으면 합산(중복 허용). 파트너 할 일만 있으면 유지. 내 할 일만 있으면 이동.
 
 drop function if exists redeem_invite_code(text);
+drop function if exists redeem_invite_code(text, boolean);
 
 create or replace function current_week_start_moaseong()
 returns date

@@ -964,12 +964,15 @@ export default function Home() {
     const userId = await ensureSignedInUser();
     if (!userId) return null;
 
-    const couple = currentCoupleId
-      ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
-      : await ensureCouple(userId);
+    // 연결 직후 등: 서버의 최신 couple을 우선해 합산 대상 사이클을 맞춤
+    const couple = (await getCurrentCouple()) ?? (
+      currentCoupleId
+        ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
+        : await ensureCouple(userId)
+    );
     syncCoupleState(userId, couple);
 
-    const cycleId = currentCycleId ?? await ensureCurrentCycle(couple.id);
+    const cycleId = await ensureCurrentCycle(couple.id);
     setCurrentCycleId(cycleId);
 
     return { userId, coupleId: couple.id, cycleId };
@@ -1725,8 +1728,9 @@ export default function Home() {
 
     setIsSaving(true);
     try {
-      // 파트너 연결 시 기존 할 일과 합산(중복 가능). 미연결은 교체 저장.
-      const savedTasks = (choreSaveMode === "merge" || Boolean(partnerId))
+      // 파트너 연결 시(또는 merge 모드) 기존 목록 유지 + 선택분 합산(중복 허용)
+      const shouldMerge = choreSaveMode === "merge" || Boolean(partnerId);
+      const savedTasks = shouldMerge
         ? await appendWeeklyChores(context.cycleId, context.userId, choreSelectionTasks, context.userId, partnerId)
         : await replaceWeeklyChores(context.cycleId, context.userId, choreSelectionTasks);
       setTasks(savedTasks);
