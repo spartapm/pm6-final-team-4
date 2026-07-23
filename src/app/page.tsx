@@ -275,6 +275,8 @@ export default function Home() {
   const tasksFingerprintRef = useRef("");
   const notificationsFingerprintRef = useRef("");
   const letterStatusFingerprintRef = useRef("");
+  const screenRef = useRef<Screen>("landing");
+  const choreSaveModeRef = useRef<"replace" | "merge">("replace");
   const [letters, setLetters] = useState<AppLetter[]>([]);
   const [reactions, setReactions] = useState<AppReaction[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<AppWeeklyStat[]>([]);
@@ -311,6 +313,14 @@ export default function Home() {
   const [inviteEntry, setInviteEntry] = useState<"onboarding" | "settings">("onboarding");
   const [choreMode, setChoreMode] = useState<"first" | "repeat">("first");
   const [choreSaveMode, setChoreSaveMode] = useState<"replace" | "merge">("replace");
+
+  useEffect(() => {
+    screenRef.current = screen;
+  }, [screen]);
+
+  useEffect(() => {
+    choreSaveModeRef.current = choreSaveMode;
+  }, [choreSaveMode]);
   const [statsComplete, setStatsComplete] = useState(false);
   const [weekStreak, setWeekStreak] = useState(0);
   const [weeklyLetterStatus, setWeeklyLetterStatus] = useState({ meSent: false, partnerSent: false, bothSent: false });
@@ -665,7 +675,8 @@ export default function Home() {
       // 요청 중에 로컬 변경이 있으면 덮어쓰지 않음
       if (localMutationRef.current > 0) return;
 
-      if (savedTasks) {
+      // A-06 선택 중에는 공용 할 일 폴링으로 선택 UI를 덮어쓰지 않음
+      if (savedTasks && screenRef.current !== "chores") {
         const nextTasksKey = tasksFingerprint(savedTasks);
         if (nextTasksKey !== tasksFingerprintRef.current) {
           const resolvedLetter = letterStatus ?? weeklyLetterStatusRef.current;
@@ -683,6 +694,9 @@ export default function Home() {
             castleStageRef.current = nextStage;
           }
         }
+      } else if (savedTasks) {
+        // 선택 화면에서도 fingerprint만 갱신해 저장 후 홈 동기화에 대비
+        tasksFingerprintRef.current = tasksFingerprint(savedTasks);
       }
 
       ingestPolledNotifications(notifs);
@@ -732,9 +746,21 @@ export default function Home() {
     };
   }, [screen, currentUserId, isAuthResolving, quietSyncPartnerVisibleData]);
 
-  const prepareChoreSelection = async (coupleId: string, userId: string) => {
+  const prepareChoreSelection = async (
+    coupleId: string,
+    userId: string,
+    options?: { mergeWithPartner?: boolean },
+  ) => {
     const seeded = await seedDefaultTemplates(userId);
     setTemplates(seeded);
+
+    // 파트너 합산용: 항상 전체 템플릿(~60)을 보여 주고, 저장 시 append
+    if (options?.mergeWithPartner) {
+      setChoreSaveMode("merge");
+      setTasks(mergeTemplatesIntoCatalog(seeded));
+      setChoreMode("first");
+      return;
+    }
 
     const savedTasks = await loadWeeklyChores(await ensureCurrentCycle(coupleId), userId, partnerId);
     if (savedTasks.length > 0) {
@@ -1341,11 +1367,16 @@ export default function Home() {
   const openChoreSelection = async () => {
     const userId = await ensureSignedInUser();
     if (!userId) return;
-    const couple = currentCoupleId
-      ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
-      : await ensureCouple(userId);
+    const couple = (await getCurrentCouple()) ?? (
+      currentCoupleId
+        ? { id: currentCoupleId, user_a_id: userId, user_b_id: partnerId }
+        : await ensureCouple(userId)
+    );
     syncCoupleState(userId, couple);
-    await prepareChoreSelection(couple.id, userId);
+    const connectedPartnerId = couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id;
+    await prepareChoreSelection(couple.id, userId, {
+      mergeWithPartner: Boolean(connectedPartnerId),
+    });
     setScreen("chores");
   };
 
@@ -1662,14 +1693,10 @@ export default function Home() {
     }
   };
 
-  /** 코드 입력 연결 후 A-06: 신규 선택분을 파트너 할 일과 합산(중복 허용) */
+  /** 코드 입력 연결 후 A-06: 전체 템플릿에서 선택 → 파트너 목록과 합산 */
   const openChoresAfterPartnerConnect = async (coupleId: string, userId: string) => {
     await loadCycleData(coupleId, userId);
-    setChoreSaveMode("merge");
-    const seeded = await seedDefaultTemplates(userId);
-    setTemplates(seeded);
-    setTasks(mergeTemplatesIntoCatalog(seeded));
-    setChoreMode("first");
+    await prepareChoreSelection(coupleId, userId, { mergeWithPartner: true });
     setScreen("chores");
   };
 
@@ -1763,7 +1790,7 @@ export default function Home() {
     setScreen("chores");
   };
 
-  /** 파트너 연결 후: 파트너 할 일 있음 → C-01 / 없음 → A-06 (합산 저장) */
+  /** 파트너 연결 후: 상대/내 할 일 유무와 관계없이 미선택자는 전체 템플릿에서 선택(합산) */
   const continueAfterPartnerCheck = async (
     coupleId: string,
     userId: string,
@@ -1772,15 +1799,17 @@ export default function Home() {
     const taskCount = await loadCycleData(coupleId, userId);
     const partnerHasChores = options?.partnerHasChores;
 
-    // 파트너 할 일 없음(N) → A-06 (내 할 일이 있어도 추가 선택 가능, 합산 저장)
+    // 파트너 할 일 없음(N) → A-06 (합산 저장 가능)
     if (partnerHasChores === false) {
-      setChoreSaveMode(taskCount > 0 ? "merge" : "replace");
-      await prepareChoreSelection(coupleId, userId);
+      await prepareChoreSelection(coupleId, userId, {
+        mergeWithPartner: taskCount > 0 || Boolean(partnerId),
+      });
       setScreen("chores");
       return;
     }
 
-    // 파트너 할 일 있음(Y) 또는 합산 후 목록이 있으면 C-01
+    // 파트너 할 일 있음(Y)이고 이미 공용 목록이 있으면 C-01
+    // (코드 입력자는 connect 직후 openChoresAfterPartnerConnect 로 전체 템플릿 A-06 진입)
     if (partnerHasChores === true || taskCount > 0) {
       setScreen("home");
       return;
