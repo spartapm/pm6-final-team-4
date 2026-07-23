@@ -2812,13 +2812,15 @@ input[type="checkbox"] {
 
 .weekly-later-button {
   width: 100%;
-  min-height: 48px;
+  min-height: 40px;
   border: 0;
-  border-radius: 14px;
-  background: #ece6ef;
+  border-radius: 0;
+  background: transparent;
   color: #7a7088;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .weekly-send-button {
@@ -3751,7 +3753,9 @@ h3 {
   text-align: left;
 }
 
-.home-done-item.is-cancelled span {
+.home-done-item.is-completed span,
+.home-done-item.is-cancelled span,
+.home-done-partner-title.is-completed {
   color: #8b8079;
   text-decoration: line-through;
 }

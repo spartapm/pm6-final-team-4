@@ -174,6 +174,21 @@ create policy "profiles are owned by user" on profiles
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+drop policy if exists "profiles are visible to couple partners" on profiles;
+create policy "profiles are visible to couple partners" on profiles
+  for select to authenticated
+  using (
+    exists (
+      select 1
+      from couples
+      where couples.user_b_id is not null
+        and (
+          (couples.user_a_id = auth.uid() and couples.user_b_id = profiles.user_id)
+          or (couples.user_b_id = auth.uid() and couples.user_a_id = profiles.user_id)
+        )
+    )
+  );
+
 drop policy if exists "couples are visible to members" on couples;
 create policy "couples are visible to members" on couples
   for select to authenticated

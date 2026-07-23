@@ -1,5 +1,6 @@
 -- F-01 partner connect chore merge policy
 -- Run in Supabase SQL Editor (safe to re-run).
+-- 양쪽 할 일이 있으면 합산(중복 허용). 파트너 할 일만 있으면 유지. 내 할 일만 있으면 이동.
 
 drop function if exists redeem_invite_code(text);
 
@@ -106,15 +107,16 @@ begin
   return json_build_object(
     'generator_has_chores', v_gen_count > 0,
     'enterer_has_chores', v_ent_count > 0,
-    'needs_confirm', (v_gen_count > 0 and v_ent_count > 0)
+    -- 합산 정책: 교체 확인 모달 불필요
+    'needs_confirm', false
   );
 end;
 $$;
 
 grant execute on function preview_invite_connect(text) to authenticated;
 
--- Generator chores win when present; else move enterer chores.
--- When both have chores, p_confirm_replace must be true.
+-- 파트너(생성자) 할 일 유지 + 내(입장자) 할 일 합산(중복 허용).
+-- p_confirm_replace 는 하위호환용이며 합산 시 무시한다.
 create or replace function redeem_invite_code(p_code text, p_confirm_replace boolean default false)
 returns uuid
 language plpgsql
@@ -166,10 +168,6 @@ begin
   v_gen_count := couple_current_week_chore_count(v_generator_couple_id);
   v_ent_count := enterer_solo_current_week_chore_count(v_enterer);
 
-  if v_gen_count > 0 and v_ent_count > 0 and not coalesce(p_confirm_replace, false) then
-    raise exception 'chores_conflict_needs_confirm';
-  end if;
-
   update couples
   set user_b_id = v_enterer,
       connected_at = now()
@@ -186,9 +184,8 @@ begin
     and week_start = v_week_start
   limit 1;
 
-  if v_gen_count > 0 then
-    null;
-  elsif v_ent_count > 0 then
+  -- 내 할 일이 있으면 파트너 사이클에 합산(파트너 할 일만 있어도 유지, 둘 다 있으면 합산)
+  if v_ent_count > 0 then
     if v_gen_cycle_id is null then
       insert into weekly_cycles (couple_id, week_start, week_end)
       values (v_generator_couple_id, v_week_start, v_week_end)

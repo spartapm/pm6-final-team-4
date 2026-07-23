@@ -259,7 +259,7 @@ export function parseInviteError(error: unknown) {
   if (message.includes("already_connected")) return "이미 연결된 코드예요.";
   if (message.includes("cannot_use_own_invite_code")) return "내 코드는 직접 사용할 수 없어요.";
   if (message.includes("chores_conflict_needs_confirm")) {
-    return "파트너의 할 일 목록으로 변경하려면 확인이 필요해요.";
+    return "할 일 목록을 합산하려면 다시 연결해 주세요.";
   }
   return "초대 코드 처리에 실패했어요. 다시 시도해 주세요.";
 }
@@ -475,7 +475,8 @@ export async function appendWeeklyChores(
   viewerUserId?: string | null,
   partnerUserId?: string | null,
 ): Promise<AppTask[]> {
-  const selectedTasks = tasks.filter((task) => task.selected);
+  // 이미 DB에 있는 항목은 다시 insert하지 않음. 신규 선택분만 추가(동일 제목도 별도 행으로 허용).
+  const selectedTasks = tasks.filter((task) => task.selected && !isPersistedId(task.id));
   if (selectedTasks.length > 0) {
     const { error } = await supabase.from("weekly_chores").insert(
       selectedTasks.map((task) => ({

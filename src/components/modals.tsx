@@ -53,7 +53,7 @@ export function ConfirmDialog({
 }
 
 export function AlertDialog({
-  title = "알림",
+  title,
   message,
   onClose,
 }: {
@@ -63,8 +63,8 @@ export function AlertDialog({
 }) {
   return (
     <ModalOverlay onClose={onClose}>
-      <h2 className="modal-title">{title}</h2>
-      <p className="modal-message">{message}</p>
+      {title ? <h2 className="modal-title">{title}</h2> : null}
+      {title ? <p className="modal-message">{message}</p> : <DialogMessage message={message} />}
       <button className="modal-confirm full" type="button" onClick={onClose}>확인</button>
     </ModalOverlay>
   );

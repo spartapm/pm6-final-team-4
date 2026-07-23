@@ -137,7 +137,6 @@ import {
   parseDeleteAccountError,
   parseDisconnectError,
   parseInviteError,
-  previewInviteConnect,
   redeemInviteCode,
   replaceWeeklyChores,
   appendWeeklyChores,
@@ -383,7 +382,17 @@ export default function Home() {
 
   const syncCoupleState = (userId: string, couple: { id: string; user_a_id: string; user_b_id: string | null } | null) => {
     setCurrentCoupleId(couple?.id ?? null);
-    setPartnerId(couple ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id) : null);
+    const nextPartnerId = couple
+      ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
+      : null;
+    setPartnerId(nextPartnerId);
+    if (!nextPartnerId) {
+      setPartnerProfile(null);
+      return;
+    }
+    void getPartnerProfile(nextPartnerId)
+      .then((profile) => setPartnerProfile(profile))
+      .catch(() => setPartnerProfile(null));
   };
 
   // v4: 미참여 지난주 마감 팝업 오탐 방지 (온보딩/파트너 연결 직후)
@@ -484,6 +493,26 @@ export default function Home() {
     if (screen === "stats") trackEvent("weekly_report_viewed");
     if (screen === "weeklyLetter") trackEvent("weekly_praise_prompt_shown");
   }, [screen, isAuthResolving, choreMode, currentUserId]);
+
+  // C-03/D-01 등: 파트너 닉·이모지 최신화 (연결 직후·화면 진입 시)
+  useEffect(() => {
+    if (!partnerId) {
+      setPartnerProfile(null);
+      return;
+    }
+    if (screen !== "letter" && screen !== "letters" && screen !== "home" && screen !== "mypage") return;
+    let cancelled = false;
+    void getPartnerProfile(partnerId)
+      .then((profile) => {
+        if (!cancelled) setPartnerProfile(profile);
+      })
+      .catch(() => {
+        if (!cancelled) setPartnerProfile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [partnerId, screen]);
 
   const loadCycleData = async (coupleId: string, userId: string) => {
     const cycleId = await ensureCurrentCycle(coupleId);
@@ -1582,94 +1611,63 @@ export default function Home() {
 
   const connectWithInviteCode = async (
     code: string,
-    options: { fromSettings: boolean; confirmReplace?: boolean },
+    _options: { fromSettings: boolean },
   ) => {
     const userId = await ensureSignedInUser();
     if (!userId) return;
 
     trackEvent("invite_code_entered");
 
-    const runRedeem = async (confirmReplace: boolean) => {
-      inviteBusyRef.current = true;
-      setIsSaving(true);
-      try {
-        await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
-        const coupleId = await redeemInviteCode(code, confirmReplace);
-        const couple = await getCurrentCouple();
-        syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
-        setInviteCode("");
-        trackEvent("partner_connected");
-
-        // 코드 생성자(상대)에게 파트너 연결 알림
-        const inviteOwnerId = couple
-          ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
-          : null;
-        if (inviteOwnerId) {
-          try {
-            await createNotification({
-              userId: inviteOwnerId,
-              title: "파트너 연결 알림",
-              body: partnerConnectNotifBody(nickname),
-            });
-          } catch {
-            // 알림 실패는 연결 성공을 막지 않음
-          }
-        }
-
-        if (options.fromSettings) {
-          showAlert("연결 완료", "파트너와 연결됐어요.", () => {
-            void continueAfterPartnerCheck(coupleId, userId);
-          });
-          return;
-        }
-
-        // 합산 할 일 있음 → C-01 / 없음 → A-06 (알럿·컨펌 없이)
-        await continueAfterPartnerCheck(coupleId, userId);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("chores_conflict_needs_confirm")) {
-          showConfirm(
-            "파트너의 할 일 목록으로 변경할까요?",
-            "파트너와 연결하면 현재 설정한 이번 주 할 일은 삭제되고, 파트너가 설정한 할 일 목록으로 변경돼요.",
-            () => void runRedeem(true),
-            "연결하기",
-            "취소",
-          );
-          return;
-        }
-        const isNetworkError = !navigator.onLine || /network|fetch|Failed to fetch/i.test(message);
-        showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
-      } finally {
-        inviteBusyRef.current = false;
-        setIsSaving(false);
-      }
-    };
-
-    if (options.confirmReplace) {
-      await runRedeem(true);
-      return;
-    }
-
+    inviteBusyRef.current = true;
     setIsSaving(true);
     try {
-      const preview = await previewInviteConnect(code);
-      if (preview.needs_confirm) {
-        setIsSaving(false);
-        showConfirm(
-          "파트너의 할 일 목록으로 변경할까요?",
-          "파트너와 연결하면 현재 설정한 이번 주 할 일은 삭제되고, 파트너가 설정한 할 일 목록으로 변경돼요.",
-          () => void runRedeem(true),
-          "연결하기",
-          "취소",
-        );
-        return;
+      await ensureProfile(userId, nickname.trim() || "모아", selectedEmoji);
+
+      const coupleId = await redeemInviteCode(code, true);
+      const couple = await getCurrentCouple();
+      syncCoupleState(userId, couple ?? { id: coupleId, user_a_id: userId, user_b_id: null });
+      setInviteCode("");
+      trackEvent("partner_connected");
+
+      const inviteOwnerId = couple
+        ? (couple.user_a_id === userId ? couple.user_b_id : couple.user_a_id)
+        : null;
+      if (inviteOwnerId) {
+        try {
+          await createNotification({
+            userId: inviteOwnerId,
+            title: "파트너 연결 알림",
+            body: partnerConnectNotifBody(nickname),
+          });
+        } catch {
+          // 알림 실패는 연결 성공을 막지 않음
+        }
       }
-      await runRedeem(false);
+
+      // 유효 코드 연결 성공 → 알럿 확인 후 A-06 (선택분은 파트너 목록과 합산)
+      showAlert(
+        "",
+        "파트너와 연결되었어요!\n이제 할 일을 설정해 볼까요?",
+        () => void openChoresAfterPartnerConnect(coupleId, userId),
+      );
     } catch (error) {
-      setIsSaving(false);
       const isNetworkError = !navigator.onLine || (error instanceof Error && /network|fetch|Failed to fetch/i.test(error.message));
       showAlert("알림", isNetworkError ? "인터넷 연결을 확인해 주세요." : parseInviteError(error));
+    } finally {
+      inviteBusyRef.current = false;
+      setIsSaving(false);
     }
+  };
+
+  /** 코드 입력 연결 후 A-06: 신규 선택분을 파트너 할 일과 합산(중복 허용) */
+  const openChoresAfterPartnerConnect = async (coupleId: string, userId: string) => {
+    await loadCycleData(coupleId, userId);
+    setChoreSaveMode("merge");
+    const seeded = await seedDefaultTemplates(userId);
+    setTemplates(seeded);
+    setTasks(mergeTemplatesIntoCatalog(seeded));
+    setChoreMode("first");
+    setScreen("chores");
   };
 
   const toggleChoreSelection = (id: string) => {
@@ -1761,13 +1759,29 @@ export default function Home() {
     setScreen("chores");
   };
 
-  /** 파트너 연결 후: 합산 할 일 있음 → C-01 / 없음 → A-06 */
-  const continueAfterPartnerCheck = async (coupleId: string, userId: string) => {
+  /** 파트너 연결 후: 파트너 할 일 있음 → C-01 / 없음 → A-06 (합산 저장) */
+  const continueAfterPartnerCheck = async (
+    coupleId: string,
+    userId: string,
+    options?: { partnerHasChores?: boolean },
+  ) => {
     const taskCount = await loadCycleData(coupleId, userId);
-    if (taskCount > 0) {
+    const partnerHasChores = options?.partnerHasChores;
+
+    // 파트너 할 일 없음(N) → A-06 (내 할 일이 있어도 추가 선택 가능, 합산 저장)
+    if (partnerHasChores === false) {
+      setChoreSaveMode(taskCount > 0 ? "merge" : "replace");
+      await prepareChoreSelection(coupleId, userId);
+      setScreen("chores");
+      return;
+    }
+
+    // 파트너 할 일 있음(Y) 또는 합산 후 목록이 있으면 C-01
+    if (partnerHasChores === true || taskCount > 0) {
       setScreen("home");
       return;
     }
+
     setChoreSaveMode("replace");
     await prepareChoreSelection(coupleId, userId);
     setScreen("chores");
@@ -1866,10 +1880,12 @@ export default function Home() {
     const letterStatus = await getWeeklyLetterStatus(targetCycleId, userId, partnerId);
     setWeeklyLetterStatus(letterStatus);
     const weekChores = await loadWeeklyChores(targetCycleId, userId, partnerId);
+    // 전체수 = 나와 파트너가 설정한 할 일 합산(공유 사이클 전체). 완료수 = 양쪽 완료 합산.
     const weekDone = weekChores.filter((task) => task.done).length;
     const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
     const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
-    const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
+    const weekTotal = weekChores.length;
+    const weekProgress = calcWeekProgress(weekDone, weekTotal, letterStatus);
     const complete = letterStatus.bothSent && weekProgress >= 100;
     trackEvent("castle_stage_finalized", {
       completion_rate: weekProgress,
@@ -1884,7 +1900,7 @@ export default function Home() {
     setReportMeta({
       progress: weekProgress,
       completeCount: weekDone,
-      totalCount: weekChores.length,
+      totalCount: weekTotal,
       meDone: weekMeDone,
       partnerDone: weekPartnerDone,
     });
@@ -2008,16 +2024,16 @@ export default function Home() {
   };
 
   const handleWeeklyLetterLater = () => {
-    const meaningfulLength = letterBody.replace(/\s/g, "").length;
-    if (meaningfulLength >= 1) {
-      void sendLetter(true);
-      return;
-    }
-
+    // 작성 유무와 관계없이 컨펌 → 확인 시 미저장으로 B-03 이동
     showConfirm(
       "",
       "편지를 작성하지 않으시면 성을 완성하지 못하게 됩니다. 그래도 넘어가시겠습니까?",
-      () => void skipWeeklyLetterLater(),
+      () => {
+        setLetterBody("");
+        setReaction("");
+        setIcebreakerPhrasesCache(null);
+        void skipWeeklyLetterLater();
+      },
       "확인",
       "취소",
     );
@@ -2232,10 +2248,11 @@ export default function Home() {
       setStatsComplete(stat.completionRate >= 100);
       setStatsEntry("castle");
       setClosingWeekProgress(stat.completionRate);
+      // 상세 로드 전: 완료 합만 알 수 있음. 전체수는 로드 후 확정(0건이면 빈 상태 문구).
       setReportMeta({
         progress: stat.completionRate,
         completeCount: totalDone,
-        totalCount: Math.max(totalDone, 1),
+        totalCount: totalDone,
         meDone: meCount,
         partnerDone: partnerCount,
       });
@@ -2252,7 +2269,8 @@ export default function Home() {
         const weekDone = weekChores.filter((task) => task.done).length;
         const weekMeDone = weekChores.filter((task) => task.done && task.assignee === "me").length;
         const weekPartnerDone = weekChores.filter((task) => task.done && task.assignee === "partner").length;
-        const weekProgress = calcWeekProgress(weekDone, weekChores.length, letterStatus);
+        const weekTotal = weekChores.length;
+        const weekProgress = calcWeekProgress(weekDone, weekTotal, letterStatus);
 
         setWeeklyLetterStatus(letterStatus);
         setLetters(weekLetters);
@@ -2262,10 +2280,10 @@ export default function Home() {
         setStatsComplete(letterStatus.bothSent && weekProgress >= 100);
         setReportMeta({
           progress: weekProgress,
-          completeCount: weekDone || totalDone,
-          totalCount: weekChores.length || Math.max(totalDone, 1),
-          meDone: weekMeDone || meCount,
-          partnerDone: weekPartnerDone || partnerCount,
+          completeCount: weekDone,
+          totalCount: weekTotal,
+          meDone: weekMeDone,
+          partnerDone: weekPartnerDone,
         });
         setWeeklyStats((current) => current.map((item) => (
           item.id === stat.id || item.weekStart === stat.weekStart
@@ -2276,8 +2294,8 @@ export default function Home() {
           await upsertWeeklyStats({
             cycleId,
             completionRate: weekProgress,
-            meCompletedCount: weekMeDone || meCount,
-            partnerCompletedCount: weekPartnerDone || partnerCount,
+            meCompletedCount: weekMeDone,
+            partnerCompletedCount: weekPartnerDone,
             sentLetterCount: (letterStatus.meSent ? 1 : 0) + (letterStatus.partnerSent ? 1 : 0),
           });
         } catch {
@@ -2730,7 +2748,7 @@ export default function Home() {
 
       {dialog?.kind === "alert" && (
         <AlertDialog
-          title={dialog.title || "알림"}
+          title={dialog.title}
           message={dialog.message}
           onClose={() => {
             dialog.onClose?.();
@@ -3363,7 +3381,7 @@ function ChoreSelectScreen({
         <p>
           원하는 카테고리에서 추가할 할 일을 선택해주세요.
           <br />
-          파트너 연결 시 파트너가 선택한 항목과 합쳐져요. (중복 가능)
+          파트너 연결 시 파트너가 설정한 할 일 목록과 합산됩니다. (중복 가능)
         </p>
       </header>
 
@@ -3728,7 +3746,7 @@ function HomeScreen({
   const sortedDone = sortHomeDoneTasks(visibleDone);
   const previewDone = doneExpanded ? sortedDone : sortedDone.slice(0, HOME_DONE_PREVIEW_LIMIT);
   const doneGroups = groupHomeDoneTasks(previewDone);
-  const showDoneMore = !doneExpanded && sortedDone.length > HOME_DONE_PREVIEW_LIMIT;
+  const showDoneToggle = sortedDone.length > HOME_DONE_PREVIEW_LIMIT;
   const partnerName = partnerDisplayName(partnerProfile);
 
   const incompleteGroups = incomplete.reduce<Record<string, AppTask[]>>((acc, task) => {
@@ -3855,7 +3873,7 @@ function HomeScreen({
                         <li key={task.id}>
                           {doneTab === "me" ? (
                             <button
-                              className={`home-done-item clickable${cancelling ? " is-cancelled" : ""}`}
+                              className={`home-done-item clickable is-completed${cancelling ? " is-cancelled" : ""}`}
                               type="button"
                               onClick={() => handleUncomplete(task.id)}
                             >
@@ -3864,7 +3882,7 @@ function HomeScreen({
                             </button>
                           ) : (
                             <div className="home-done-partner-row">
-                              <span className="home-done-partner-title">{task.title}</span>
+                              <span className="home-done-partner-title is-completed">{task.title}</span>
                               <div className="home-reaction-row">
                                 {reactionButtons.map((item) => {
                                   const selected = task.myReaction === item.value;
@@ -3892,9 +3910,13 @@ function HomeScreen({
                 </li>
               ))}
             </ul>
-            {showDoneMore ? (
-              <button className="home-done-more" type="button" onClick={() => setDoneExpanded(true)}>
-                더보기
+            {showDoneToggle ? (
+              <button
+                className="home-done-more"
+                type="button"
+                onClick={() => setDoneExpanded((current) => !current)}
+              >
+                더보기 <span aria-hidden>{doneExpanded ? "△" : "▽"}</span>
               </button>
             ) : null}
           </>
@@ -4234,18 +4256,7 @@ function WeeklyLetterScreen({
           편지를 써서 성을 완성하세요!
           <span className="weekly-letter-title-icon"><AssetImage src={reactionLetter} alt="" /></span>
         </h2>
-        <p className="weekly-letter-subtitle">{partnerName}에게 이번 주 고마움을 전해봐요</p>
-
-        <div className="instant-recipient-card weekly-letter-recipient">
-          <span className="instant-recipient-avatar">
-            <AvatarMark value={partnerAvatarId(partnerProfile)} />
-          </span>
-          <div>
-            <em>받는 사람</em>
-            <strong>{partnerName}</strong>
-          </div>
-          <AssetImage src={reactionHeartPink} alt="" />
-        </div>
+        <p className="weekly-letter-subtitle">할 일을 모두 끝낸 뒤 편지를 작성하면 성이 완성돼요</p>
 
         <div className="weekly-ai-wrap">
           <span className="weekly-ai-bubble" aria-hidden>
@@ -4285,9 +4296,6 @@ function WeeklyLetterScreen({
         </div>
 
         <div className="weekly-letter-actions">
-          <button className="weekly-later-button" type="button" onClick={onLater}>
-            나중에 작성하기
-          </button>
           <button
             className={canSend ? "weekly-send-button active" : "weekly-send-button"}
             type="button"
@@ -4301,7 +4309,10 @@ function WeeklyLetterScreen({
             }}
           >
             <AssetImage src={reactionLetter} alt="" />
-            {canSend ? "전송하고 완성된 성 보기" : "편지 보내고 성 완성하기"}
+            편지 보내고 성 완성하기
+          </button>
+          <button className="weekly-later-button" type="button" onClick={onLater}>
+            나중에 작성하기
           </button>
         </div>
       </div>
@@ -4717,6 +4728,7 @@ function formatLetterDayLabel(letter: AppLetter) {
 
 const REPORT_DONUT_COLORS = ["#FDC9D8", "#CDBAF4", "#FEEC99", "#CAF5BB", "#BFDFFD"] as const;
 
+/** 카테고리별 완료 비율(소수 1자리). 합이 정확히 100.0% 가 되도록 최대잔여 방식으로 보정 */
 function buildReportCategorySlices(tasks: AppTask[]) {
   const doneTasks = tasks.filter((task) => task.done);
   const counts = new Map<string, number>();
@@ -4731,24 +4743,43 @@ function buildReportCategorySlices(tasks: AppTask[]) {
 
   const top = sorted.slice(0, 4);
   const rest = sorted.slice(4);
-  const slices = top.map(([label, count], index) => ({
+  const rawSlices = top.map(([label, count], index) => ({
     label,
     count,
-    percent: Math.round((count / totalDone) * 1000) / 10,
     color: REPORT_DONUT_COLORS[index] ?? REPORT_DONUT_COLORS[4],
   }));
 
   if (rest.length > 0) {
     const restCount = rest.reduce((sum, [, count]) => sum + count, 0);
-    slices.push({
+    rawSlices.push({
       label: `외 ${rest.length}개`,
       count: restCount,
-      percent: Math.round((restCount / totalDone) * 1000) / 10,
       color: REPORT_DONUT_COLORS[4],
     });
   }
 
-  return slices;
+  // 소수 첫째자리까지 내린 뒤, 잔여(1000 - 합)를 소수부가 큰 조각부터 +0.1
+  const floors = rawSlices.map((slice) => {
+    const exact = (slice.count / totalDone) * 1000; // 0.1% 단위
+    return { ...slice, floor: Math.floor(exact), frac: exact - Math.floor(exact) };
+  });
+  let remain = 1000 - floors.reduce((sum, slice) => sum + slice.floor, 0);
+  const order = floors
+    .map((slice, index) => ({ index, frac: slice.frac, count: slice.count }))
+    .sort((a, b) => b.frac - a.frac || b.count - a.count || a.index - b.index);
+
+  for (const item of order) {
+    if (remain <= 0) break;
+    floors[item.index].floor += 1;
+    remain -= 1;
+  }
+
+  return floors.map(({ label, count, color, floor }) => ({
+    label,
+    count,
+    percent: floor / 10,
+    color,
+  }));
 }
 
 function ReportDonutChart({ slices }: { slices: { label: string; count: number; percent: number; color: string }[] }) {
@@ -4850,8 +4881,14 @@ function StatsScreen({
   const partnerName = partnerDisplayName(partnerProfile);
   const myTasks = tasks.filter((task) => task.done && task.assignee === "me");
   const partnerTasks = tasks.filter((task) => task.done && task.assignee === "partner");
+  // 공유 사이클 기준: 전체 = 양쪽이 설정한 할 일 합, 완료 = 양쪽 완료 합
+  const resolvedTotalCount = tasks.length > 0 ? tasks.length : totalCount;
+  const resolvedCompleteCount = tasks.length > 0
+    ? tasks.filter((task) => task.done).length
+    : completeCount;
   const categorySlices = buildReportCategorySlices(tasks);
-  const hasTasks = totalCount > 0;
+  const hasTasks = resolvedTotalCount > 0;
+  const showDonut = hasTasks && resolvedCompleteCount > 0 && categorySlices.length > 0;
   const nextWeekSub = complete || progress >= 100
     ? "100% 완성! 다음 성도 지으러 가요"
     : "꾸준히 함께하고 있어요. 다음 주도 화이팅";
@@ -4891,12 +4928,12 @@ function StatsScreen({
           </h3>
 
           {hasTasks ? (
-            <p className="weekly-report-ours-count">{completeCount} / {totalCount}개 완료</p>
+            <p className="weekly-report-ours-count">{resolvedCompleteCount} / {resolvedTotalCount}개 완료</p>
           ) : (
             <p className="weekly-report-ours-empty">이번 주 설정된 할일이 없어요</p>
           )}
 
-          {hasTasks && categorySlices.length > 0 ? (
+          {showDonut ? (
             <>
               <ReportDonutChart slices={categorySlices} />
               <ul className="weekly-report-legend">
@@ -4938,13 +4975,13 @@ function StatsScreen({
                 </li>
               ))}
             </ul>
-            {!expandedMeChores && myTasks.length > 5 ? (
+            {myTasks.length > 5 ? (
               <button
                 className="weekly-report-more"
                 type="button"
-                onClick={() => setExpandedMeChores(true)}
+                onClick={() => setExpandedMeChores((current) => !current)}
               >
-                더보기 <span aria-hidden>▼</span>
+                더보기 <span aria-hidden>{expandedMeChores ? "△" : "▽"}</span>
               </button>
             ) : null}
           </div>
@@ -4963,13 +5000,13 @@ function StatsScreen({
                 </li>
               ))}
             </ul>
-            {!expandedPartnerChores && partnerTasks.length > 5 ? (
+            {partnerTasks.length > 5 ? (
               <button
                 className="weekly-report-more"
                 type="button"
-                onClick={() => setExpandedPartnerChores(true)}
+                onClick={() => setExpandedPartnerChores((current) => !current)}
               >
-                더보기 <span aria-hidden>▼</span>
+                더보기 <span aria-hidden>{expandedPartnerChores ? "△" : "▽"}</span>
               </button>
             ) : null}
           </div>
